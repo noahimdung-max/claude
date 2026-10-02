@@ -7,3 +7,5 @@ minecraft_fishing/logs/
 minecraft_fishing/error.txt
 history.json
 history.tmp
+inv_debug.png
+tooltip_debug.png

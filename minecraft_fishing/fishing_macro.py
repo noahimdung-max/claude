@@ -21,7 +21,8 @@ import winapi
 from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
-                    inventory_slots, slot_is_empty, read_tooltip_durability, hotbar_index)
+                    inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
+                    screen_changed, save_debug_image, hotbar_index)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -104,6 +105,7 @@ class Macro:
         self.inv_due = True              # 다음 던지기 전에 인벤 확인
         self.inv_empty = None            # 마지막으로 본 인벤 빈칸 수
         self.inv_map = None              # 36칸 빈칸 여부 (True = 빈칸)
+        self.gui_scale = None            # 마크 GUI 배율 (핫바 선택 칸 크기로 앎)
         self.inv_note = ""               # 인벤 확인 결과 한 줄
         self.history = load_history()
         self._hist_t = None
@@ -772,12 +774,14 @@ class Macro:
             cx, _, cw, _ = winapi.client_rect(self.hwnd)
             sx -= cx
         x, y, sw, sh = slot
+        self.gui_scale = max(1, round(sw / 24))          # 선택 칸 테두리 = 24 GUI 픽셀
         self.stats["slot"] = hotbar_index((sx + x, y, sw, sh), cw) + 1
         return self.stats["slot"]
 
     # ---------- 인벤 확인 (정밀 내구도 / 빈칸) ----------
     def inventory_check(self):
-        """E 로 인벤 열고: 빈칸 세기 + 낚싯대 칸에 마우스 올려 툴팁(F3+H) 내구도 읽기 -> 닫기."""
+        """E 로 인벤 열고: 빈칸 세기 + 낚싯대 칸에 마우스 올려 툴팁(F3+H) 내구도 읽기 -> 닫기.
+        게임 화면일 땐 마우스를 절대 안 움직임 (움직이면 시점이 돌아가서 물을 못 봄)."""
         c = self.cfg
         self.inv_due = False
         if not self.hwnd:
@@ -786,46 +790,66 @@ class Macro:
         slot = self.hotbar_slot()
         self.state = "인벤 확인 중"
         self.set_shift(False)
-        _, _, cw, ch = winapi.client_rect(self.hwnd)
-        self.move_mouse(cw // 2, ch // 2)
+        before = self.client_img()
         self.press("e")
-        inv, img, end = None, None, time.perf_counter() + 2.0
+        inv, img, opened, verified = None, None, False, False
         try:
-            while inv is None and time.perf_counter() < end:
+            end = time.perf_counter() + 2.0
+            while time.perf_counter() < end:
                 self.check()
                 time.sleep(0.1)
                 img = self.client_img()
                 inv = find_inventory(img)
-            if inv is None:
-                self.inv_note = "인벤 창을 못 찾음 (리소스팩/크리에이티브면 안 될 수 있음)"
-                return
+                if inv:
+                    opened = verified = True
+                    break
+            if not verified:
+                opened = screen_changed(before, img)
+                if not opened:
+                    self.inv_note = "인벤이 안 열림 (E 키가 인벤이 맞는지 확인)"
+                    return
+                save_debug_image(img, "inv_debug.png")
+                if not self.gui_scale:
+                    self.inv_note = "인벤 창 모양을 못 찾음 (inv_debug.png 를 보내줘)"
+                    return
+                inv = guess_inventory(img.shape[1], img.shape[0], self.gui_scale)    # 화면 가운데라고 보고 진행
             x0, y0, s = inv
-            self.move_mouse(max(0, x0 - 20 * s), y0 + 20 * s)      # 칸 위에 마우스가 있으면 밝아져서 빈칸 오판
-            time.sleep(0.25)
-            img = self.client_img()
-            self.inv_map = [slot_is_empty(img, sl) for sl in inventory_slots(inv)]
-            self.inv_empty = sum(self.inv_map)
-            note = f"빈칸 {self.inv_empty}개"
-            if c["exact_durability"] and slot:
-                sx, sy, size = inventory_slots(inv)[27 + slot - 1]
-                self.move_mouse(sx + size // 2, sy + size // 2)
-                d, end = None, time.perf_counter() + 1.5
-                while d is None and time.perf_counter() < end:
-                    time.sleep(0.15)
-                    d = read_tooltip_durability(self.client_img())
-                if d:
-                    self.exact = {"cur": d[0], "max": d[1], "slot": slot, "at": self.run_caught}
-                    if c["durability_max"] != d[1]:             # 최대 내구도도 정확히 알게 됨 -> 색 추정에도 사용
-                        c["durability_max"] = d[1]
-                        save_config(c)
-                    note += f" / {slot}번 칸 내구도 {d[0]}/{d[1]} (정확)"
+            note = []
+            if verified:
+                self.move_mouse(max(0, x0 - 20 * s), y0 + 20 * s)  # 칸 위에 마우스가 있으면 밝아져서 빈칸 오판
+                time.sleep(0.25)
+                img = self.client_img()
+                self.inv_map = [slot_is_empty(img, sl) for sl in inventory_slots(inv)]
+                self.inv_empty = sum(self.inv_map)
+                note.append(f"빈칸 {self.inv_empty}개")
+            else:
+                note.append("인벤 창 모양이 달라서 빈칸은 못 셈 (inv_debug.png 를 보내줘)")
+            if c["exact_durability"]:
+                if not slot:
+                    note.append("들고 있는 칸을 못 찾음")
                 else:
-                    self.exact = None
-                    note += " / 툴팁 숫자 못 읽음 (마크에서 F3+H 켰는지 확인)"
-            self.inv_note = note
+                    sx, sy, size = inventory_slots(inv)[27 + slot - 1]
+                    self.move_mouse(sx + size // 2, sy + size // 2)
+                    d, end = None, time.perf_counter() + 1.5
+                    while d is None and time.perf_counter() < end:
+                        time.sleep(0.15)
+                        img = self.client_img()
+                        d = read_tooltip_durability(img)
+                    if d:
+                        self.exact = {"cur": d[0], "max": d[1], "slot": slot, "at": self.run_caught}
+                        if c["durability_max"] != d[1]:         # 최대 내구도도 정확히 알게 됨 -> 색 추정에도 사용
+                            c["durability_max"] = d[1]
+                            save_config(c)
+                        note.append(f"{slot}번 칸 내구도 {d[0]}/{d[1]} (정확)")
+                    else:
+                        self.exact = None
+                        save_debug_image(img, "tooltip_debug.png")
+                        note.append("툴팁 숫자 못 읽음 (F3+H 켰는지 확인, 안 되면 tooltip_debug.png 를 보내줘)")
+            self.inv_note = " / ".join(note)
         finally:
-            self.press("esc")
-            time.sleep(0.3)
+            if opened:
+                self.press("esc")
+            time.sleep(0.5)
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
 

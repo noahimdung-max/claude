@@ -487,6 +487,33 @@ def find_inventory(img):
     return x - 2 * s, y - 2 * s, s
 
 
+def guess_inventory(w, h, s):
+    """인벤 창 위치를 계산으로 (마크는 화면 가운데에 둠). find_inventory 가 실패할 때 대신."""
+    gw, gh = -(-w // s), -(-h // s)
+    return ((gw - INV_W) // 2) * s, ((gh - INV_H) // 2) * s, s
+
+
+def screen_changed(a, b, thr=12.0):
+    """두 화면이 크게 달라졌는지 (인벤 같은 창이 열리면 뒤가 어두워짐)."""
+    if a is None or b is None or a.shape != b.shape:
+        return False
+    sa = cv2.resize(cv2.cvtColor(a, cv2.COLOR_BGR2GRAY), (64, 36), interpolation=cv2.INTER_AREA)
+    sb = cv2.resize(cv2.cvtColor(b, cv2.COLOR_BGR2GRAY), (64, 36), interpolation=cv2.INTER_AREA)
+    return float(np.abs(sa.astype(np.int16) - sb).mean()) > thr
+
+
+def save_debug_image(img, name):
+    """문제 생겼을 때 화면을 exe 옆에 저장 (보내주면 원인 확인용). 한글 경로 지원."""
+    if img is None:
+        return
+    try:
+        ok, buf = cv2.imencode(".png", img)
+        if ok:
+            (DATA_DIR / name).write_bytes(buf.tobytes())
+    except OSError:
+        pass
+
+
 def inventory_slots(inv):
     """칸 36개 (위 3줄 27 + 핫바 9) 의 (x, y, 크기). 핫바는 뒤 9개 = 1~9번 칸."""
     x0, y0, s = inv

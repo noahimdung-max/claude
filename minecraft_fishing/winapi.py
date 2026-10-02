@@ -292,7 +292,7 @@ class WGCScreen:
         self._img, self._lock, self._stop = None, threading.Lock(), False
         self.frames = 0
         self.closed = False
-        kw = dict(cursor_capture=False, window_hwnd=int(hwnd), minimum_update_interval=8)
+        kw = dict(cursor_capture=False, window_hwnd=int(hwnd), minimum_update_interval=12)
         try:
             cap = WindowsCapture(draw_border=False, **kw)     # 노란 테두리 끔 (윈도우 11)
         except Exception:

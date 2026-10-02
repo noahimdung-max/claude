@@ -183,9 +183,14 @@ def durability_value(img, max_dur=64):
             hue = 0.0
         val = min(max_dur, max(0, round(hue / 120 * max_dur)))
         return int(val), "color"
-    black_rows = ((mx <= 25).sum(axis=1) >= max(4, img.shape[1] // 4))
-    if black_rows.any():
-        return 2, "low"
+    # 1~2 남으면 색 바 없이 검은 바탕 줄(칸 폭의 13/16)만 그려짐 -> 길게 이어진 검은 가로줄이 있어야 인정
+    # (아이템 그림의 어두운 점들을 '거의 다 닳음'으로 잘못 보지 않게)
+    black = mx <= 25
+    need = max(4, int(img.shape[1] * 0.7))
+    for row in black:
+        idx = np.flatnonzero(np.diff(np.concatenate(([0], row.astype(np.int8), [0]))))
+        if idx.size and (idx[1::2] - idx[::2]).max() >= need:
+            return 2, "low"
     return int(max_dur), "full"
 
 

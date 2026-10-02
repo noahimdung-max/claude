@@ -4,6 +4,7 @@
 폰트: Galmuri (SIL OFL 1.1, fonts/LICENSE.txt)
 """
 import colorsys
+import os
 import ctypes
 import queue
 import random
@@ -11,6 +12,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -575,7 +577,7 @@ class App:
 
         self.macro = None
         threading.Thread(target=self.worker, daemon=True).start()
-        keyboard.add_hotkey("f8", lambda: self.macro and self.macro.toggle())
+        keyboard.add_hotkey("f8", self.toggle)
         keyboard.add_hotkey("f7", self.f7.set)
 
         self.refresh_status()
@@ -966,6 +968,17 @@ class App:
             lb.config(text=f"{t}  {text}", fg=colors.get(tag, TXT) if i == 0 else MUTED)
 
     def tick(self):
+        """화면 갱신. 그리다 오류가 나도 갱신은 계속 (멈추면 버튼/상태가 안 바뀌어 '정지 안 됨'처럼 보임)."""
+        try:
+            self.tick_body()
+        except Exception:
+            if not getattr(self, "_tick_err", False):
+                self._tick_err = True
+                from fishing_macro import save_error
+                save_error(traceback.format_exc())
+        self.root.after(100, self.tick)
+
+    def tick_body(self):
         while not self.q.empty():
             self.log(self.q.get())
 
@@ -1012,8 +1025,6 @@ class App:
             self._last_caught = s["caught"]
             if self.cfg["bar_roi"] and not self.status_lbl["bar"].cget("text").startswith("● 찾음"):
                 self.refresh_status()
-
-        self.root.after(100, self.tick)
 
     def draw_durability(self, d):
         v = self.vals["dura"]
@@ -1634,6 +1645,11 @@ class App:
 
     # ---------- 실행 ----------
     def toggle(self):
+        """시작/정지. 키를 꾹 누르면 반복 입력돼서 켜졌다 꺼지는 걸 막음 (0.5초 안 재입력 무시)."""
+        now = time.perf_counter()
+        if now - getattr(self, "_last_toggle", 0) < 0.5:
+            return
+        self._last_toggle = now
         if self.macro:
             self.macro.toggle()
 
@@ -1641,11 +1657,21 @@ class App:
         if self.macro:
             self.macro.quit = True
             self.macro.running = False
-        keyboard.unhook_all()
+            try:
+                self.macro.set_shift(False)
+                self.macro.close_screen()
+            except Exception:
+                pass
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
         self.root.after(200, self.root.destroy)
 
     def run(self):
         self.root.mainloop()
+        if getattr(sys, "frozen", False):
+            os._exit(0)                  # 캡처 스레드 등이 남아 프로세스가 안 꺼지는 것 방지
 
 
 if __name__ == "__main__":

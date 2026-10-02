@@ -16,6 +16,7 @@ if IS_WIN:
     from ctypes import wintypes
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
     # 64비트 윈도우에서 핸들/포인터가 잘리지 않게 인자 형식을 전부 지정
     def _sig(dll, name, res, *args):
@@ -38,6 +39,12 @@ if IS_WIN:
     _sig(user32, "ReleaseDC", ctypes.c_int, H, HDC)
     _sig(user32, "PrintWindow", wintypes.BOOL, H, HDC, wintypes.UINT)
     _sig(user32, "PostMessageW", wintypes.BOOL, H, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    _sig(user32, "GetWindowThreadProcessId", wintypes.DWORD, H, ctypes.POINTER(wintypes.DWORD))
+    _sig(kernel32, "OpenProcess", wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _sig(kernel32, "SetPriorityClass", wintypes.BOOL, wintypes.HANDLE, wintypes.DWORD)
+    _sig(kernel32, "SetProcessInformation", wintypes.BOOL, wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+         wintypes.DWORD)
+    _sig(kernel32, "CloseHandle", wintypes.BOOL, wintypes.HANDLE)
     _sig(gdi32, "CreateCompatibleDC", HDC, HDC)
     _sig(gdi32, "CreateCompatibleBitmap", HBMP, HDC, ctypes.c_int, ctypes.c_int)
     _sig(gdi32, "SelectObject", HGDI, HDC, HGDI)
@@ -105,6 +112,29 @@ def bring_to_front(hwnd):
     return bool(user32.SetForegroundWindow(hwnd))
 
 
+class _PowerThrottling(ctypes.Structure):
+    _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+
+
+def keep_awake(hwnd):
+    """마크가 뒤에 있어도 느려지지 않게: 윈도우 절전 제한(EcoQoS) 끄기 + 우선순위 '높음 아래'.
+    반환 (우선순위 성공, 절전 제한 끄기 성공)"""
+    if not IS_WIN or not hwnd:
+        return False, False
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x0200 | 0x1000, False, pid.value)   # SET_INFORMATION | QUERY_LIMITED_INFORMATION
+    if not h:
+        return False, False
+    try:
+        prio = bool(kernel32.SetPriorityClass(h, 0x00008000))      # ABOVE_NORMAL_PRIORITY_CLASS
+        st = _PowerThrottling(1, 0x1 | 0x4, 0)                     # 실행 속도/타이머 제한 둘 다 끔
+        throttle = bool(kernel32.SetProcessInformation(h, 4, ctypes.byref(st), ctypes.sizeof(st)))
+        return prio, throttle
+    finally:
+        kernel32.CloseHandle(h)
+
+
 def client_rect(hwnd):
     """창 안쪽(게임 화면)의 화면 기준 (x, y, w, h)."""
     r = wintypes.RECT()
@@ -170,7 +200,7 @@ def post_shift(hwnd, down):
 class WindowScreen:
     """Screen 과 같은 모양(mon, grab, full). 좌표는 기존처럼 '화면 기준'으로 받고 창 캡처에서 잘라냄."""
 
-    def __init__(self, hwnd, cache_sec=0.008):
+    def __init__(self, hwnd, cache_sec=0.015):
         self.hwnd = hwnd
         self.cache_sec = cache_sec
         self._img, self._t, self._origin = None, 0.0, (0, 0)

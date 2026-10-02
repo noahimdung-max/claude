@@ -77,6 +77,7 @@ class Macro:
         self.bg_mode = False             # 백그라운드 모드 사용 중
         self.io_ready = False            # 시작할 때마다 창 찾기/모드 설정
         self.fails = 0                   # 연속으로 못 낚은 횟수
+        self.shift_method = "real"
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
         self.logger.write("START", f"화면 {self.screen.mon}")
         self.logger.config(cfg)
@@ -154,7 +155,9 @@ class Macro:
                 self.out("[정지] 이 PC에선 가려진 마크 화면을 캡처할 수 없어 -> 백그라운드 모드 끄고 써줘")
                 raise Stop
             self.screen, self.bg_mode = ws, True
-            self.out("백그라운드 모드: 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)")
+            prio, throttle = winapi.keep_awake(self.hwnd)
+            self.out("백그라운드 모드: 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)"
+                     + ("" if throttle else " / 마크 절전 제한 끄기 실패: 가이드 참고"))
         else:
             self.screen = Screen(c["monitor"])
             if self.hwnd and not winapi.is_foreground(self.hwnd):
@@ -171,14 +174,31 @@ class Macro:
         time.sleep(0.05)
         pydirectinput.mouseUp(button="right")
 
-    def set_shift(self, down):
-        if down == self.shift_down:
-            return
-        if self.bg_mode:
+    def _shift_method(self):
+        """백그라운드 모드라도 마크 창이 앞에 있으면 진짜 키 입력을 써야 함.
+        (마크(GLFW)는 창이 앞에 있을 때 실제 키보드에 Shift 가 안 눌려 있으면 바로 떼버림)"""
+        if self.bg_mode and not winapi.is_foreground(self.hwnd):
+            return "post"
+        return "real"
+
+    def _send_shift(self, method, down):
+        if method == "post":
             winapi.post_shift(self.hwnd, down)
         else:
             (pydirectinput.keyDown if down else pydirectinput.keyUp)("shift")
-        self.shift_down = down
+
+    def set_shift(self, down):
+        method = self._shift_method()
+        if down == self.shift_down and method == self.shift_method:
+            return
+        if self.shift_down and method != self.shift_method:
+            # 창 전환됨: 예전 방식으로 누른 Shift 를 확실히 뗌 (다른 창에 Shift 가 남지 않게)
+            self._send_shift(self.shift_method, False)
+            if down:
+                self._send_shift(method, True)
+        else:
+            self._send_shift(method, down)
+        self.shift_down, self.shift_method = down, method
 
     def check(self):
         if self.quit or not self.running:
@@ -481,6 +501,8 @@ class Macro:
 
         t0 = last_active = time.perf_counter()
         prev_zone, prev_t, vel = zone, t0, 0.0
+        prev_fish, prev_ft, fvel = fish, t0, 0.0
+        frame_dt, last_frame = 0.01, t0
         n = n_inactive = n_nozone = n_inside = n_toggle = 0
         snapped_lost = snapped_nozone = False
         lost_img, lost_n = None, 0
@@ -492,6 +514,9 @@ class Macro:
                 now = time.perf_counter()
                 active, zone, fish = self.bar_state()
                 n += 1
+                frame_dt = 0.9 * frame_dt + 0.1 * (now - last_frame)
+                last_frame = now
+                self.set_shift(self.shift_down)   # 창이 앞/뒤로 바뀌었으면 Shift 입력 방식 갈아탐
 
                 g = self.gauge_ratio()
                 if g is not None and g >= c["gauge_full_ratio"]:
@@ -534,7 +559,12 @@ class Macro:
                             vel = 0.7 * vel + 0.3 * (zone - prev_zone) / dt
                     prev_zone, prev_t = zone, now
 
-                err = fish - (zone + vel * c["lead_sec"])
+                if prev_fish is not None and now > prev_ft:
+                    fvel = 0.7 * fvel + 0.3 * (fish - prev_fish) / (now - prev_ft)
+                prev_fish, prev_ft = fish, now
+                # 화면 확인이 느릴수록(백그라운드 모드) 더 앞을 내다봄
+                lead = max(c["lead_sec"], 1.5 * frame_dt)
+                err = (fish + fvel * lead) - (zone + vel * lead)
                 before = self.shift_down
                 if err < -c["deadzone_px"]:
                     self.set_shift(True)    # 왼쪽으로
@@ -556,7 +586,7 @@ class Macro:
         self.logger.write("SUMMARY", f"미니게임 {dur:.1f}초, 끝난 이유: {end_reason}, 프레임 {n}, "
                                      f"물고기가 구간 안 {n_inside}/{n}, 구간 못찾음 {n_nozone}, 중간에 놓친 프레임 {n_inactive}, "
                                      f"Shift 전환 {n_toggle}회")
-        self.out(f"미니게임 끝 (총 {self.stats['caught']}회, {dur:.1f}초)")
+        self.out(f"미니게임 끝 (총 {self.stats['caught']}회, {dur:.1f}초, 초당 {n / max(dur, 0.1):.0f}번 확인)")
         self.fails = 0
 
         if c["reel_click_after_game"]:

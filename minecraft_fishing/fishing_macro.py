@@ -1,11 +1,14 @@
 """마인크래프트 낚시 매크로.
 
 F8: 시작/일시정지   F9: 종료
+낚싯대 내구도 바가 빨간색이 되면 자동 정지 + 알림.
 python fishing_macro.py            # 실행
 python fishing_macro.py --preview  # 검출 결과 실시간 확인(입력 안 보냄)
 python fishing_macro.py --debug    # 실행 + 로그
 """
 import argparse
+import ctypes
+import threading
 import time
 
 import cv2
@@ -13,10 +16,24 @@ import keyboard
 import numpy as np
 import pydirectinput
 
-from common import Screen, color_mask, load_config
+from common import Screen, color_mask, durability_hue, load_config
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
+
+
+def alert(msg):
+    print(f"\n[알림] {msg}")
+    try:
+        import winsound
+        for _ in range(3):
+            winsound.Beep(1200, 250)
+    except Exception:
+        pass
+    threading.Thread(
+        target=lambda: ctypes.windll.user32.MessageBoxW(0, msg, "낚시 매크로", 0x40000 | 0x30),
+        daemon=True,
+    ).start()
 
 
 class Stop(Exception):
@@ -31,6 +48,8 @@ class Macro:
         self.running = False
         self.quit = False
         self.shift_down = False
+        self.zone_w = 0
+        self.prev_zone = None
         keyboard.add_hotkey("f8", self.toggle)
         keyboard.add_hotkey("f9", self.request_quit)
 
@@ -84,8 +103,43 @@ class Macro:
         return float(xs.mean())
 
     def bar_state(self):
-        img = self.screen.grab(self.cfg["bar_roi"])
-        return self.find_x(img, self.cfg["bar_color"]), self.find_x(img, self.cfg["fish_color"])
+        """(잡는 구간 중심 x, 물고기 x). 못 찾으면 None."""
+        c = self.cfg
+        img = self.screen.grab(c["bar_roi"])
+        fish_x = self.find_x(img, c["fish_color"])
+
+        cols = np.nonzero(color_mask(img, c["bar_color"], c["bar_tolerance"]).any(axis=0))[0]
+        if cols.size == 0:
+            return None, fish_x
+        left, right = int(cols.min()), int(cols.max())
+        span = right - left
+        if span > self.zone_w * 0.6:
+            self.zone_w = max(self.zone_w, span)
+            zone_x = (left + right) / 2
+        elif self.zone_w > 0 and self.prev_zone is not None:
+            # 괄호가 하나만 보임(물고기에 가림 등) -> 이전 위치 기준으로 어느 쪽인지 판단
+            x = (left + right) / 2
+            zone_x = x + self.zone_w / 2 if x < self.prev_zone else x - self.zone_w / 2
+        else:
+            return None, fish_x
+        self.prev_zone = zone_x
+        return zone_x, fish_x
+
+    def gauge_ratio(self):
+        c = self.cfg
+        if not c["gauge_roi"]:
+            return None
+        img = self.screen.grab(c["gauge_roi"])
+        return color_mask(img, c["gauge_color"], c["gauge_tolerance"]).sum() / c["gauge_full_pixels"]
+
+    def durability_ok(self):
+        c = self.cfg
+        if not c["durability_roi"]:
+            return True
+        hue = durability_hue(self.screen.grab(c["durability_roi"]))
+        self.log(f"내구도 hue={hue}")
+        # hue 0 근처 = 빨강. 330 이상도 빨강 계열
+        return hue is None or c["durability_red_hue"] < hue < 330
 
     # ---------- 단계 ----------
     def wait_bite(self):
@@ -139,6 +193,11 @@ class Macro:
                 now = time.perf_counter()
                 bar_x, fish_x = self.bar_state()
 
+                g = self.gauge_ratio()
+                if g is not None and g >= c["gauge_full_ratio"]:
+                    self.log("게이지 가득 -> 낚음")
+                    break
+
                 if fish_x is None:
                     if now - last_seen > c["minigame_end_missing_sec"]:
                         break
@@ -158,7 +217,7 @@ class Macro:
                     self.set_shift(True)    # 왼쪽으로
                 elif err > c["deadzone_px"]:
                     self.set_shift(False)   # 오른쪽으로
-                self.log(f"bar={bar_x:.0f} fish={fish_x:.0f} err={err:.0f} shift={self.shift_down}")
+                self.log(f"zone={bar_x:.0f} fish={fish_x:.0f} err={err:.0f} shift={self.shift_down} gauge={g}")
                 time.sleep(0.005)
         finally:
             self.set_shift(False)
@@ -168,6 +227,10 @@ class Macro:
             self.right_click()
 
     def cycle(self):
+        if not self.durability_ok():
+            self.running = False
+            alert("낚싯대 내구도가 빨간색. 매크로 정지함.")
+            raise Stop
         self.right_click()               # 던지기
         if self.wait_bite():
             self.right_click()           # 낚기
@@ -201,8 +264,9 @@ def preview(cfg):
 
         g = screen.grab(cfg["bar_roi"])
         gv = g.copy()
-        for color, mark in ((cfg["bar_color"], (255, 0, 0)), (cfg["fish_color"], (0, 0, 255))):
-            m = color_mask(g, color, tol)
+        for color, t, mark in ((cfg["bar_color"], cfg["bar_tolerance"], (255, 0, 0)),
+                               (cfg["fish_color"], tol, (0, 0, 255))):
+            m = color_mask(g, color, t)
             gv[m] = mark
             xs = np.nonzero(m)[1]
             if xs.size >= cfg["min_pixels"]:
@@ -210,7 +274,13 @@ def preview(cfg):
 
         cv2.imshow("bobber (green=detected)", cv2.resize(bv, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST))
         cv2.imshow("bar (blue=bar, red=fish)", cv2.resize(gv, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST))
-        print(f"\rbobber px={int(bm.sum()):5d}", end="")
+        info = f"bobber px={int(bm.sum()):5d}"
+        if cfg["gauge_roi"]:
+            gm = color_mask(screen.grab(cfg["gauge_roi"]), cfg["gauge_color"], cfg["gauge_tolerance"])
+            info += f"  gauge={gm.sum() / cfg['gauge_full_pixels']:.0%}"
+        if cfg["durability_roi"]:
+            info += f"  durability hue={durability_hue(screen.grab(cfg['durability_roi']))}"
+        print("\r" + info + "      ", end="")
         if cv2.waitKey(30) & 0xFF == ord("q"):
             break
     cv2.destroyAllWindows()
@@ -223,7 +293,10 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
-    missing = [k for k in ("bobber_roi", "bobber_color", "bar_roi", "bar_color", "fish_color") if not cfg[k]]
+    missing = [k for k in ("bobber_roi", "bobber_color", "bar_roi") if not cfg[k]]
+    for k in ("gauge_roi", "durability_roi"):
+        if not cfg[k]:
+            print(f"경고: {k} 미설정 -> 해당 기능 꺼짐")
     if missing:
         raise SystemExit(f"캘리브레이션 필요: {missing} -> python calibrate.py 먼저 실행")
 

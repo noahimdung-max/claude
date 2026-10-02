@@ -18,7 +18,7 @@ import pydirectinput
 
 import winapi
 
-from common import (Screen, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
+from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
@@ -36,6 +36,23 @@ class NullLog:
 
     def config(self, *a):
         pass
+
+
+def notify(webhook, msg):
+    """디스코드 웹훅으로 알림 (주소가 있을 때만, 실패해도 무시)."""
+    if not webhook:
+        return
+
+    def send():
+        import json
+        import urllib.request
+        try:
+            req = urllib.request.Request(webhook, data=json.dumps({"content": "🎣 " + msg}).encode(),
+                                         headers={"Content-Type": "application/json", "User-Agent": "fishing-macro"})
+            urllib.request.urlopen(req, timeout=5).read()
+        except Exception:
+            pass
+    threading.Thread(target=send, daemon=True).start()
 
 
 def alert(msg):
@@ -79,6 +96,7 @@ class Macro:
         self.fails = 0                   # 연속으로 못 낚은 횟수
         self.shift_method = "real"
         self.capture_name = "화면"
+        self.run_caught = 0              # 이번 시작 후 낚은 수 (목표용)
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
         self.logger.write("START", f"화면 {self.screen.mon}")
         self.logger.config(cfg)
@@ -93,7 +111,8 @@ class Macro:
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None, "active": False,
-                      "sub": None, "gauge": None, "dura": None, "caught": 0}
+                      "sub": None, "gauge": None, "dura": None, "caught": 0,
+                      "casts": 0, "games": 0, "catch_times": [], "colors": {}, "started": None}
         if hotkeys:
             import keyboard
             keyboard.add_hotkey("f8", self.toggle)
@@ -118,6 +137,8 @@ class Macro:
         if self.running:
             self.io_ready = False
             self.fails = 0
+            self.stats["started"] = time.time()
+            self.run_caught = 0
             self.start_at = time.perf_counter() + self.cfg["start_delay_sec"]
             self.out("[시작] " + ("백그라운드 모드로 시작" if self.cfg["background"] else "마크 창으로 전환해서 시작"))
         else:
@@ -135,6 +156,14 @@ class Macro:
         self.logger.write("DEBUG", msg)          # 파일엔 항상 기록
         if self.debug:
             self._ui_out(msg)
+
+    def stop_with(self, msg):
+        """알림 띄우고(+디스코드) 멈춤."""
+        self.running = False
+        self.out("[알림] " + msg)
+        alert(msg)
+        notify(self.cfg["discord_webhook"], msg + f" (이번에 {self.run_caught}마리)")
+        raise Stop
 
     def close_screen(self):
         if hasattr(self.screen, "stop"):
@@ -211,6 +240,9 @@ class Macro:
     def check(self):
         if self.quit or not self.running:
             raise Stop
+        if self.bg_mode and not winapi.window_alive(self.hwnd):
+            self.set_shift(False)
+            self.stop_with("마크 창이 닫혔어 -> 정지")
         # 일반 모드: 마크 창이 앞에 없으면 다른 창에 키가 들어가니 기다림
         if not self.bg_mode and self.hwnd and not winapi.is_foreground(self.hwnd):
             self.set_shift(False)
@@ -537,7 +569,11 @@ class Macro:
                 return
             time.sleep(0.01)
         self.state = "미니게임 중"
-        self.out("미니게임 시작")
+        self.stats["games"] += 1
+        color = None
+        if self.last_view is not None and fish is not None:
+            color = fish_color_name(split_view(self.last_view, view_roi(c["bar_roi"])[1])[0], fish)
+        self.out("미니게임 시작" + (f" ({color} 물고기)" if color else ""))
         self.logger.snap(self.last_view, "미니게임_시작")
 
         t0 = last_active = time.perf_counter()
@@ -624,6 +660,14 @@ class Macro:
             self.set_shift(False)
         dur = time.perf_counter() - t0
         self.stats["caught"] += 1
+        self.run_caught += 1
+        self.stats["catch_times"].append(time.time())
+        if color:
+            self.stats["colors"][color] = self.stats["colors"].get(color, 0) + 1
+        self.cfg["total_caught"] = self.cfg.get("total_caught", 0) + 1
+        save_config(self.cfg)
+        if c["notify_each_catch"]:
+            notify(c["discord_webhook"], f"{color or ''} 물고기 낚음 (이번 {self.run_caught}마리)")
         self.logger.write("SUMMARY", f"미니게임 {dur:.1f}초, 끝난 이유: {end_reason}, 프레임 {n}, "
                                      f"물고기가 구간 안 {n_inside}/{n}, 구간 못찾음 {n_nozone}, 중간에 놓친 프레임 {n_inactive}, "
                                      f"Shift 전환 {n_toggle}회")
@@ -634,20 +678,21 @@ class Macro:
             self.right_click()
 
     def cycle(self):
+        c = self.cfg
+        if c["goal_count"] and self.run_caught >= c["goal_count"]:
+            self.stop_with(f"목표 {c['goal_count']}마리 달성! -> 정지")
+        if c["goal_minutes"] and self.stats["started"] and time.time() - self.stats["started"] >= c["goal_minutes"] * 60:
+            self.stop_with(f"{c['goal_minutes']}분 지남 -> 정지")
         if not self.durability_ok():
-            self.running = False
             val, kind = self.stats["dura"]
             now = "1~2" if kind == "low" else str(val)
-            msg = (f"낚싯대 내구도 {now}/{self.cfg['durability_max']} "
-                   f"(멈춤 기준 {self.cfg['durability_stop_pct']}% 이하) -> 정지")
-            self.out("[알림] " + msg)
-            alert(msg)
-            raise Stop
+            self.stop_with(f"낚싯대 내구도 {now}/{c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
         self.state = "던지는 중"
         if self.cfg["bite_mode"] in ("bobber", "both"):
             _, m = self.bobber_search_mask()
             self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기
+        self.stats["casts"] += 1
         caught_before = self.stats["caught"]
         if self.wait_bite():
             self.right_click()           # 낚기
@@ -657,11 +702,7 @@ class Macro:
         if self.stats["caught"] == caught_before:
             self.fails += 1
             if self.fails >= self.cfg["max_fails"]:
-                self.running = False
-                msg = f"{self.fails}번 연속으로 못 낚았어 -> 정지 (물 쪽을 보고 있는지, 설정 확인)"
-                self.out("[알림] " + msg)
-                alert(msg)
-                raise Stop
+                self.stop_with(f"{self.fails}번 연속으로 못 낚았어 -> 정지 (물 쪽을 보고 있는지, 설정 확인)")
         self.state = "다시 던지기 대기"
         self.sleep(self.cfg["recast_delay_sec"])
 
@@ -686,6 +727,7 @@ class Macro:
                 tb = traceback.format_exc()
                 self.logger.write("ERROR", tb)
                 save_error(tb)
+                notify(self.cfg["discord_webhook"], "오류로 정지: " + tb.strip().splitlines()[-1])
                 self.out("오류로 정지: " + tb.strip().splitlines()[-1] + "  (error.txt 에 자세히)")
             finally:
                 self.set_shift(False)

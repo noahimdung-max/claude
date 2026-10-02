@@ -35,6 +35,11 @@ DEFAULTS = {
     "durability_ignore": False,  # True 면 내구도 안 봄 (수선 낚싯대)
     "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)
     "max_fails": 5,              # 연속으로 이만큼 못 낚으면 멈춤
+    "goal_count": 0,             # 이만큼 낚으면 멈춤 (0 = 끔)
+    "goal_minutes": 0,           # 이만큼 지나면 멈춤 (0 = 끔)
+    "discord_webhook": "",       # 디스코드 웹훅 주소 (멈출 때 알림)
+    "notify_each_catch": False,  # 낚을 때마다 디스코드 알림
+    "total_caught": 0,           # 지금까지 낚은 총 수 (계속 누적)
     "tolerance": 30,             # 색 허용 오차(채널별)
     "bar_tolerance": 45,         # 괄호는 픽셀마다 밝기 차이가 커서 넉넉히
     "gauge_tolerance": 20,
@@ -228,6 +233,23 @@ def fish_blob_x(bar, cfg):
                 and r0 - 1 <= cy <= r1 + 1):
             best, best_area = float(cent[i][0]), area
     return best
+
+
+FISH_COLORS = [(15, "빨강"), (40, "주황"), (70, "노랑"), (165, "초록"), (200, "하늘"), (260, "파랑"),
+               (300, "보라"), (345, "분홍"), (360, "빨강")]
+
+
+def fish_color_name(bar, x):
+    """물고기(가운데 x) 주변의 선명한 색 -> '초록', '노랑' 같은 이름. 낚은 물고기 종류 통계용."""
+    h = bar.shape[0]
+    x0, x1 = max(0, int(x) - h), min(bar.shape[1], int(x) + h)
+    crop = bar[:, x0:x1]
+    m = fishlike_mask(crop)
+    if m.sum() < 3:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hue = float(np.median(hsv[..., 0][m])) * 2
+    return next(name for lim, name in FISH_COLORS if hue <= lim)
 
 
 def gauge_present(above, bar_h):

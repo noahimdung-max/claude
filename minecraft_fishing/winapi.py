@@ -30,6 +30,7 @@ if IS_WIN:
     _sig(user32, "GetClassNameW", ctypes.c_int, H, wintypes.LPWSTR, ctypes.c_int)
     _sig(user32, "GetForegroundWindow", H)
     _sig(user32, "IsIconic", wintypes.BOOL, H)
+    _sig(user32, "IsWindow", wintypes.BOOL, H)
     _sig(user32, "ShowWindow", wintypes.BOOL, H, ctypes.c_int)
     _sig(user32, "SetForegroundWindow", wintypes.BOOL, H)
     _sig(user32, "keybd_event", None, wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t)
@@ -94,6 +95,10 @@ def find_minecraft():
 
 def is_foreground(hwnd):
     return bool(IS_WIN and hwnd and user32.GetForegroundWindow() == hwnd)
+
+
+def window_alive(hwnd):
+    return (not IS_WIN) or bool(hwnd and user32.IsWindow(hwnd))
 
 
 def is_minimized(hwnd):

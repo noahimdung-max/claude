@@ -515,6 +515,7 @@ class App:
         ("bite_timeout_sec", "입질 최대 대기(초)", 10, 120, 5),
         ("recast_delay_sec", "다시 던지기 전 대기(초)", 0.2, 5, 0.1),
         ("start_delay_sec", "시작 버튼 후 대기(초)", 0, 10, 1),
+        ("max_fails", "연속 실패 이만큼이면 멈춤", 1, 50, 1),
     ]
 
     def __init__(self):
@@ -585,7 +586,9 @@ class App:
         self.pin_btn = PixelButton(bottom, "고정", self.toggle_top, "mint" if self.topmost else "gray",
                                    width=n + 8 * S, height=26 * S)
         self.pin_btn.pack()
+        PixelButton(bottom, "작게", self.toggle_mini, width=n + 8 * S, height=26 * S).pack(pady=(6 * S, 0))
         self.root.attributes("-topmost", self.topmost)
+        self.main_frame = main
 
         p1 = Panel(self.pages["setup"], "화면 위치 설정", self.icons["bobber"])
         p1.pack()
@@ -598,7 +601,9 @@ class App:
         self.bite_mode = tk.StringVar(value=self.cfg["bite_mode"])
         PixelCheck(bf, "자막 (추천)", self.bite_mode, self.change_mode, radio_value="subtitle").pack(
             side="left", padx=(0, 8 * S))
-        PixelCheck(bf, "찌 화면 (예비)", self.bite_mode, self.change_mode, radio_value="bobber").pack(side="left")
+        PixelCheck(bf, "찌 화면", self.bite_mode, self.change_mode, radio_value="bobber").pack(
+            side="left", padx=(0, 8 * S))
+        PixelCheck(bf, "둘 다", self.bite_mode, self.change_mode, radio_value="both").pack(side="left")
         rows = [(k, ic, n) for k, ic, n, _ in self.ITEMS] + [("bar", "fish", "미니게임 바")]
         for r, (key, ic, name) in enumerate(rows, start=1):
             tk.Label(c, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=0, pady=2 * S)
@@ -629,9 +634,23 @@ class App:
         self.run_btn = PixelButton(p2.content, "▶ 낚시 시작! (F8)", self.toggle, "green",
                                    width=PANEL_W - 30 * S, height=44 * S, font=FONTS["m"])
         self.run_btn.pack(pady=(0, 4 * S))
+        self.pipe_cv = tk.Canvas(p2.content, width=PANEL_W - 30 * S, height=40 * S, bg=PANEL, highlightthickness=0)
+        self.pipe_cv.pack(pady=(4 * S, 0))
         self.state_lbl = label(p2.content, "정지됨", "b")
         self.state_lbl.pack()
         label(p2.content, "시작하면 마크 창으로 자동 전환돼. 게임 중엔 F8", fg=MUTED).pack()
+        gf = tk.Frame(p2.content, bg=PANEL)
+        gf.pack(fill="x", pady=(8 * S, 0))
+        tk.Label(gf, image=self.icons["emerald"], bg=PANEL).pack(side="left", padx=(0, 6 * S))
+        label(gf, "목표", "b").pack(side="left", padx=(0, 6 * S))
+        self.goal_n_var = tk.StringVar(value=str(self.cfg["goal_count"]))
+        self.goal_m_var = tk.StringVar(value=str(self.cfg["goal_minutes"]))
+        spinbox(gf, self.goal_n_var, 0, 100000, 10).pack(side="left")
+        label(gf, "마리").pack(side="left", padx=(3 * S, 8 * S))
+        spinbox(gf, self.goal_m_var, 0, 100000, 10).pack(side="left")
+        label(gf, "분 (0=끔)").pack(side="left", padx=(3 * S, 0))
+        for var in (self.goal_n_var, self.goal_m_var):
+            var.trace_add("write", lambda *a: self.save_goals())
         bgf = tk.Frame(p2.content, bg=PANEL)
         bgf.pack(fill="x", pady=(8 * S, 0))
         tk.Label(bgf, image=self.icons["heart"], bg=PANEL).pack(side="left", padx=(0, 6 * S))
@@ -658,13 +677,23 @@ class App:
         for var in (self.stop_var, self.max_var):
             var.trace_add("write", lambda *a: self.save_durability())
 
+        pd = Panel(self.pages["fish"], "낚시 기록", self.icons["fish"])
+        pd.pack(pady=(8 * S, 0))
+        self.dash_cv = tk.Canvas(pd.content, width=PANEL_W - 30 * S, height=64 * S, bg=PANEL, highlightthickness=0)
+        self.dash_cv.pack()
+        self.chips = tk.Frame(pd.content, bg=PANEL)
+        self.chips.pack(fill="x", pady=(6 * S, 0))
+        self.spark_cv = tk.Canvas(pd.content, width=PANEL_W - 30 * S, height=46 * S, bg=PANEL, highlightthickness=0)
+        self.spark_cv.pack(pady=(4 * S, 0))
+        self.elapsed = 0.0
+
         p3 = Panel(self.pages["fish"], "실시간 상태", self.icons["heart"])
         p3.pack(pady=(8 * S, 0))
         g = tk.Frame(p3.content, bg=PANEL)
         g.pack(fill="x")
         self.vals = {}
-        for i, (k, ic, name) in enumerate([("caught", "fish", "낚은 물고기"), ("bite", "chat", "입질 감지"),
-                                           ("gauge", "emerald", "게이지"), ("dura", "rod", "내구도")]):
+        for i, (k, ic, name) in enumerate([("bite", "chat", "입질 감지"), ("dura", "rod", "내구도"),
+                                           ("gauge", "emerald", "게이지")]):
             r, col = divmod(i, 2)
             tk.Label(g, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=col * 3, pady=2 * S)
             label(g, name).grid(row=r, column=col * 3 + 1, sticky="w", padx=(2 * S, 6 * S))
@@ -674,6 +703,12 @@ class App:
         self.dura_cv = tk.Canvas(g, width=40 * S, height=8 * S, bg=PANEL, highlightthickness=0)
         self.bar_cv = tk.Canvas(p3.content, width=PANEL_W - 16 * S, height=30 * S, bg=PANEL, highlightthickness=0)
         self.bar_cv.pack(pady=(6 * S, 0))
+        self.live = tk.Frame(p3.content, bg=PANEL)       # 찌 실시간 화면 (찌/둘 다 모드)
+        self.live_img = tk.Label(self.live, bg=PANEL)
+        self.live_img.pack(side="left")
+        self.trace_cv = tk.Canvas(self.live, width=PANEL_W - 2 * 14 * S - 188 * S, height=90 * S, bg=PANEL, highlightthickness=0)
+        self.trace_cv.pack(side="left", padx=(8 * S, 0))
+        self.live_photo = None
 
         self.adv = Panel(self.pages["adv"], "세부 설정", self.icons["emerald"])
         self.adv.pack()
@@ -690,6 +725,19 @@ class App:
             row=len(self.SETTINGS), column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
             row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
+
+        pn = Panel(self.pages["adv"], "디스코드 알림", self.icons["chat"])
+        pn.pack(pady=(8 * S, 0))
+        label(pn.content, "멈출 때(목표 달성·내구도·연속 실패·오류) 디스코드로 알려줘. 채널 설정 → 연동 → 웹후크 주소",
+              fg=MUTED, wraplength=PANEL_W - 40 * S, justify="left").pack(anchor="w")
+        self.hook_var = tk.StringVar(value=self.cfg["discord_webhook"])
+        tk.Entry(pn.content, textvariable=self.hook_var, font=FONTS["r"], bg=SOFT, fg=TXT, insertbackground=TXT,
+                 relief="flat", bd=0, highlightthickness=0).pack(fill="x", pady=(6 * S, 0), ipady=5 * S)
+        hr = tk.Frame(pn.content, bg=PANEL)
+        hr.pack(fill="x", pady=(6 * S, 0))
+        self.each_var = tk.BooleanVar(value=self.cfg["notify_each_catch"])
+        PixelCheck(hr, "낚을 때마다 알림", self.each_var, self.save_hook).pack(side="left")
+        PixelButton(hr, "저장 + 테스트", self.test_hook, "green").pack(side="right")
 
         self.build_guide()
 
@@ -831,6 +879,22 @@ class App:
         cv.coords(self.h_fish, x + self.fish_dir * 2 * S, wy + 12 * S + (S if self.anim_t % 6 < 3 else 0))
         self.root.after(150, self.animate)
 
+    def celebrate(self):
+        """낚을 때 헤더에 '+1' 이 떠오름."""
+        if getattr(self, "mini", None):
+            return
+        cv = self.header
+        x = int(cv["width"]) - 60 * S
+        t = cv.create_text(x, self.h_water_y, text="+1", font=FONTS["t"], fill="#ffd866")
+
+        def rise(k=0):
+            if k >= 12:
+                cv.delete(t)
+                return
+            cv.move(t, 0, -3 * S)
+            self.root.after(60, lambda: rise(k + 1))
+        rise()
+
     @staticmethod
     def flip(img):
         w, h = img.width(), img.height()
@@ -882,7 +946,9 @@ class App:
         m = self.macro
         if m:
             s = m.stats
-            self.vals["caught"].config(text=f"{s['caught']}마리")
+            self.draw_pipeline(m)
+            self.draw_dashboard(m)
+            self.draw_live(s)
             if self.cfg["bite_mode"] == "subtitle":
                 sub = s["sub"]
                 hit = sub is not None and sub >= self.cfg["subtitle_threshold"]
@@ -897,6 +963,12 @@ class App:
             else:
                 self.run_btn.set("▶ 낚시 시작! (F8)", "green")
             self.draw_bar(s)
+            if getattr(self, "mini", None):
+                self.mini_lbl.config(text=f"{m.run_caught}마리")
+                self.mini_btn.set("■ 정지 (F8)" if m.running else "▶ 시작 (F8)", "red" if m.running else "green")
+            if s["caught"] != getattr(self, "_last_caught", s["caught"]):
+                self.celebrate()
+            self._last_caught = s["caught"]
             if self.cfg["bar_roi"] and not self.status_lbl["bar"].cget("text").startswith("● 찾음"):
                 self.refresh_status()
 
@@ -922,7 +994,116 @@ class App:
         if frac > 0:
             c.create_rectangle(S, S, S + round(38 * S * frac), 6 * S, outline="",
                                fill="#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255)))
-        c.grid(row=1, column=6, sticky="w")
+        c.grid(row=0, column=6, sticky="w")
+
+    STEPS = [("던지기", ("던지는",)), ("입질 대기", ("자리잡는", "입질 기다리는")),
+             ("미니게임", ("미니게임",)), ("다시 던지기", ("다시 던지기",))]
+
+    def draw_pipeline(self, m):
+        cv = self.pipe_cv
+        cv.delete("all")
+        W = int(cv["width"])
+        cur = next((i for i, (_, keys) in enumerate(self.STEPS) if any(k in m.state for k in keys)), None)
+        if not m.running:
+            cur = None
+        n = len(self.STEPS)
+        xs = [W * (i + 0.5) / n for i in range(n)]
+        cv.create_line(xs[0], 11 * S, xs[-1], 11 * S, fill=LINE, width=3 * S)
+        for i, (name, _) in enumerate(self.STEPS):
+            on = i == cur
+            r = 7 * S if on else 5 * S
+            cv.create_oval(xs[i] - r, 11 * S - r, xs[i] + r, 11 * S + r, fill=ACCENT if on else SOFT,
+                           outline=ACCENT if on else LINE, width=2 * S)
+            cv.create_text(xs[i], 30 * S, text=name, font=FONTS["b" if on else "r"], fill=ACCENT if on else MUTED)
+
+    def draw_dashboard(self, m):
+        s = m.stats
+        now = time.time()
+        if m.running and s["started"]:
+            self.elapsed = now - s["started"]
+        mins = self.elapsed / 60
+        caught = m.run_caught
+        per_hour = caught / (self.elapsed / 3600) if self.elapsed > 60 else 0
+        rate = s["caught"] / s["casts"] if s["casts"] else 0
+        tiles = [("이번 낚시", f"{caught}마리"), ("시간당", f"{per_hour:.0f}마리"),
+                 ("성공률", f"{rate:.0%}"), ("진행", f"{int(mins // 60)}:{int(mins % 60):02d}")]
+        cv = self.dash_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        gap = 6 * S
+        tw = (W - gap * 3) / 4
+        for i, (name, val) in enumerate(tiles):
+            x0 = i * (tw + gap)
+            round_rect(cv, x0, 0, x0 + tw, H, 12 * S, fill=SOFT, outline="")
+            cv.create_text(x0 + tw / 2, 18 * S, text=name, font=FONTS["r"], fill=MUTED)
+            cv.create_text(x0 + tw / 2, 42 * S, text=val, font=FONTS["m"], fill=ACCENT if i == 0 else TXT)
+        # 물고기 색 칩
+        key = tuple(sorted(s["colors"].items())) + (self.cfg.get("total_caught", 0), id(self.chips))
+        if key != getattr(self, "_chip_key", None):
+            self._chip_key = key
+            for w in self.chips.winfo_children():
+                w.destroy()
+            label(self.chips, f"지금까지 총 {self.cfg.get('total_caught', 0)}마리", "b").pack(side="left")
+            hexes = {"빨강": "#e53935", "주황": "#fb8c00", "노랑": "#fdd835", "초록": "#43a047", "하늘": "#29b6f6",
+                     "파랑": "#1e88e5", "보라": "#8e24aa", "분홍": "#ec407a"}
+            for name, cnt in sorted(s["colors"].items(), key=lambda kv: -kv[1]):
+                chip = tk.Canvas(self.chips, width=12 * S, height=12 * S, bg=PANEL, highlightthickness=0)
+                chip.create_oval(1, 1, 12 * S - 1, 12 * S - 1, fill=hexes.get(name, MUTED), outline="")
+                chip.pack(side="left", padx=(10 * S, 3 * S))
+                label(self.chips, f"{name} {cnt}").pack(side="left")
+        # 최근 1시간, 5분 단위 막대
+        cv = self.spark_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        bins = [0] * 12
+        for t in s["catch_times"]:
+            k = int((now - t) // 300)
+            if 0 <= k < 12:
+                bins[11 - k] += 1
+        top = max(bins) or 1
+        bw = W / 12
+        for i, v in enumerate(bins):
+            h = (H - 14 * S) * v / top
+            round_rect(cv, i * bw + 2 * S, H - 14 * S - max(h, 2 * S), (i + 1) * bw - 2 * S, H - 14 * S,
+                       3 * S, fill=ACCENT if v else LINE, outline="")
+        cv.create_text(2 * S, H - 6 * S, text="1시간 전", anchor="w", font=FONTS["r"], fill=MUTED)
+        cv.create_text(W - 2 * S, H - 6 * S, text="지금", anchor="e", font=FONTS["r"], fill=MUTED)
+
+    def draw_live(self, s):
+        """찌 모드: 찌 확대 화면 + 가라앉음/물보라 그래프 (1 넘으면 입질)."""
+        show = self.cfg["bite_mode"] in ("bobber", "both")
+        if show and not self.live.winfo_ismapped():
+            self.live.pack(fill="x", pady=(6 * S, 0))
+        elif not show and self.live.winfo_ismapped():
+            self.live.pack_forget()
+        if not show:
+            return
+        img = s.get("bobber_view")
+        if img is not None and img.size:
+            h, w = img.shape[:2]
+            k = min(180 * S / w, 90 * S / h)
+            self.live_img.config(width=180 * S, height=90 * S)
+            pil = Image.fromarray(np.ascontiguousarray(img[:, :, ::-1])).resize(
+                (max(1, int(w * k)), max(1, int(h * k))), Image.NEAREST)
+            self.live_photo = ImageTk.PhotoImage(pil)
+            self.live_img.config(image=self.live_photo)
+        cv = self.trace_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        slot(cv, 0, 0, W, H, fill=BAR_BG)
+        y1 = H * 0.75 - H * 0.55
+        cv.create_line(4 * S, y1, W - 4 * S, y1, fill=ACCENT, dash=(4, 3))
+        cv.create_text(W - 6 * S, y1 + 8 * S, text="입질 기준", anchor="e", font=FONTS["r"], fill=ACCENT)
+        tr = s.get("trace") or []
+        if len(tr) >= 2:
+            for idx, color in ((0, "#1e88e5"), (1, OK)):
+                pts = []
+                for i, t in enumerate(tr[-100:]):
+                    v = max(-0.3, min(1.3, t[idx]))
+                    pts += [4 * S + (W - 8 * S) * i / 99, H * 0.75 - H * 0.55 * v]
+                cv.create_line(*pts, fill=color, width=2 * S, smooth=True)
+        cv.create_text(6 * S, 8 * S, text="━ 가라앉음", anchor="w", font=FONTS["r"], fill="#1e88e5")
+        cv.create_text(84 * S, 8 * S, text="━ 물보라", anchor="w", font=FONTS["r"], fill=OK)
 
     def draw_bar(self, s):
         cv = self.bar_cv
@@ -1110,6 +1291,49 @@ class App:
         self.refresh_status()
         self.log("바 자동 찾기 켜짐. 미니게임이 뜨면 찾아 (매크로 꺼둔 채 직접 낚시해도 찾음)", "warn")
 
+    def save_goals(self):
+        try:
+            self.cfg["goal_count"] = max(0, int(float(self.goal_n_var.get() or 0)))
+            self.cfg["goal_minutes"] = max(0, int(float(self.goal_m_var.get() or 0)))
+        except ValueError:
+            return
+        save_config(self.cfg)
+
+    def save_hook(self):
+        self.cfg["discord_webhook"] = self.hook_var.get().strip()
+        self.cfg["notify_each_catch"] = self.each_var.get()
+        save_config(self.cfg)
+
+    def test_hook(self):
+        from fishing_macro import notify
+        self.save_hook()
+        if not self.cfg["discord_webhook"].startswith("https://"):
+            messagebox.showwarning("디스코드", "웹후크 주소(https://discord.com/api/webhooks/...)를 넣어줘")
+            return
+        notify(self.cfg["discord_webhook"], "낚시 매크로 알림 테스트!")
+        self.log("디스코드 테스트 보냄 (채널에 메시지가 왔는지 확인)", "good")
+
+    def toggle_mini(self):
+        """작은 창: 시작 버튼 + 낚은 수만."""
+        if getattr(self, "mini", None):
+            self.mini.destroy()
+            self.mini = None
+            self.header.pack()
+            self.main_frame.pack(fill="both", expand=True)
+            return
+        self.header.pack_forget()
+        self.main_frame.pack_forget()
+        self.mini = tk.Frame(self.root, bg=SKY, padx=10 * S, pady=10 * S)
+        self.mini.pack()
+        p = Panel(self.mini, "마크 낚시", self.icons["fish"])
+        p.pack()
+        self.mini_btn = PixelButton(p.content, "▶ 시작 (F8)", self.toggle, "green", width=200 * S, height=36 * S,
+                                    font=FONTS["m"])
+        self.mini_btn.pack(side="left")
+        self.mini_lbl = label(p.content, "0마리", "m", fg=ACCENT)
+        self.mini_lbl.pack(side="left", padx=(10 * S, 0))
+        PixelButton(self.mini, "크게", self.toggle_mini, width=60 * S, height=24 * S).pack(pady=(6 * S, 0))
+
     def save_adv(self):
         try:
             for k, var in self.adv_vars.items():
@@ -1119,7 +1343,7 @@ class App:
             messagebox.showerror("오류", "숫자만 입력해줘")
             return
         self.cfg["reel_click_after_game"] = self.reel_var.get()
-        save_config(self.cfg)
+        self.save_hook()
         self.log("세부 설정 저장 완료!", "good")
 
     # ---------- 실행 ----------

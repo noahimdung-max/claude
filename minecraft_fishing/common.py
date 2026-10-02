@@ -1,5 +1,6 @@
 import colorsys
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ HERE = Path(__file__).parent
 DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else HERE
 CONFIG_PATH = DATA_DIR / "config.json"
 SUBTITLE_PATH = DATA_DIR / "subtitle.png"
+HISTORY_PATH = DATA_DIR / "history.json"
 
 DEFAULTS = {
     "monitor": 1,
@@ -33,6 +35,12 @@ DEFAULTS = {
     "durability_max": 64,        # 낚싯대 최대 내구도
     "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
     "durability_ignore": False,  # True 면 내구도 안 봄 (수선 낚싯대)
+    "exact_durability": False,   # (실험) 인벤 툴팁(F3+H)으로 정확한 내구도 읽기
+    "inv_check_every": 10,       # 몇 마리마다 인벤 열어서 확인할지
+    "inv_full_stop": False,      # 인벤 빈칸이 기준 이하면 멈춤
+    "inv_min_empty": 0,          # 빈칸이 이 개수 이하면 '가득 참'
+    "rod_swap": False,           # 내구도 기준 아래면 다른 칸 낚싯대로 교체
+    "rod_slots": [1, 2, 3],      # 낚싯대가 들어 있는 핫바 칸 (1~9)
     "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)
     "max_fails": 5,              # 연속으로 이만큼 못 낚으면 멈춤
     "goal_count": 0,             # 이만큼 낚으면 멈춤 (0 = 끔)
@@ -410,3 +418,173 @@ def durability_roi_in_slot(slot):
     """선택된 칸 안에서 내구도 줄이 그려지는 아래쪽 부분."""
     x, y, w, h = slot
     return [int(x + 0.08 * w), int(y + 0.70 * h), max(1, int(0.84 * w)), max(1, int(0.22 * h))]
+
+
+# ---------------------------------------------------------------- 날짜별 기록
+def load_history():
+    try:
+        return json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_history(hist):
+    try:
+        tmp = HISTORY_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(hist, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(HISTORY_PATH)
+    except OSError:
+        pass
+
+
+def history_day(hist, day):
+    d = hist.setdefault(day, {})
+    for k in ("caught", "casts", "games", "seconds"):
+        d.setdefault(k, 0)
+    d.setdefault("colors", {})
+    return d
+
+
+# ---------------------------------------------------------------- 인벤토리 (정밀 내구도 / 빈칸)
+# 마크 기본 글꼴(ascii.png)의 숫자와 '/' (5x7)
+_GLYPHS = {
+    "0": ".###.|#...#|#..##|#.#.#|##..#|#...#|.###.",
+    "1": "..#..|.##..|..#..|..#..|..#..|..#..|#####",
+    "2": ".###.|#...#|....#|..##.|.#...|#...#|#####",
+    "3": ".###.|#...#|....#|..##.|....#|#...#|.###.",
+    "4": "...##|..#.#|.#..#|#...#|#####|....#|....#",
+    "5": "#####|#....|####.|....#|....#|#...#|.###.",
+    "6": "..##.|.#...|#....|####.|#...#|#...#|.###.",
+    "7": "#####|#...#|....#|...#.|..#..|..#..|..#..",
+    "8": ".###.|#...#|#...#|.###.|#...#|#...#|.###.",
+    "9": ".###.|#...#|#...#|.####|....#|...#.|.##..",
+    "/": "....#|...#.|...#.|..#..|.#...|.#...|#....",
+}
+GLYPHS = {k: np.array([[c == "#" for c in row] for row in v.split("|")]) for k, v in _GLYPHS.items()}
+
+INV_W, INV_H = 176, 166          # 인벤 창 크기 (GUI 픽셀)
+INV_FILL = 198                   # 인벤 창 바탕 회색
+SLOT_EMPTY = 139                 # 빈 칸 회색
+
+
+def find_inventory(img):
+    """열린 인벤(서바이벌) 창을 찾음. 반환 (왼쪽, 위, GUI 배율) 또는 None.
+    바탕 회색(198) 덩어리 = 창에서 테두리 2칸씩 뺀 172x162."""
+    m = (np.abs(img.astype(np.int16) - INV_FILL).max(axis=2) <= 3).astype(np.uint8)
+    n, _, st, _ = cv2.connectedComponentsWithStats(m)
+    if n < 2:
+        return None
+    i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h, _ = (int(v) for v in st[i])
+    s = round(w / (INV_W - 4))
+    if s < 1 or abs(w - (INV_W - 4) * s) > s or abs(h - (INV_H - 4) * s) > 2 * s:
+        return None
+    return x - 2 * s, y - 2 * s, s
+
+
+def inventory_slots(inv):
+    """칸 36개 (위 3줄 27 + 핫바 9) 의 (x, y, 크기). 핫바는 뒤 9개 = 1~9번 칸."""
+    x0, y0, s = inv
+    out = [(x0 + (8 + 18 * c) * s, y0 + (84 + 18 * r) * s, 16 * s) for r in range(3) for c in range(9)]
+    out += [(x0 + (8 + 18 * c) * s, y0 + 142 * s, 16 * s) for c in range(9)]
+    return out
+
+
+def slot_is_empty(img, slot):
+    x, y, size = slot
+    a = img[y:y + size, x:x + size].astype(np.int16)
+    if a.size == 0:
+        return False
+    return float((np.abs(a - SLOT_EMPTY).max(axis=2) <= 6).mean()) >= 0.97
+
+
+def count_empty_slots(img, inv):
+    return sum(slot_is_empty(img, sl) for sl in inventory_slots(inv))
+
+
+def _glyph_of(seg, s):
+    """흰 글자 덩어리 하나를 5x7 로 줄여 숫자/'/' 판별. 아니면 None."""
+    h, w = seg.shape
+    if abs(h - 7 * s) > max(1, s // 2) or abs(w - 5 * s) > max(1, s // 2):
+        return None
+    small = seg[s // 2::s, s // 2::s][:7, :5]
+    if small.shape != (7, 5):
+        return None
+    best, bd = None, 99
+    for k, g in GLYPHS.items():
+        d = int((small != g).sum())
+        if d < bd:
+            best, bd = k, d
+    return best if bd <= 2 else None
+
+
+def find_tooltip(img, with_mask=False):
+    """툴팁 상자(거의 검은 보라색 바탕) 영역 (x, y, w, h). 없으면 None.
+    with_mask=True 면 (상자, 상자 모양 마스크) - 상자 밖 인벤 테두리 글자처럼 보이는 것 제외용."""
+    f = img.astype(np.int16)
+    b, g, r = f[:, :, 0], f[:, :, 1], f[:, :, 2]
+    m = ((g <= 22) & (r >= 8) & (r <= 45) & (b >= 8) & (b <= 45) & (r - g >= 6)).astype(np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))   # 글자 구멍 메움
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m)
+    if n < 2:
+        return None
+    i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h, area = (int(v) for v in st[i])
+    if w < 30 or h < 15:
+        return None
+    if not with_mask:
+        return x, y, w, h
+    inside = (lab[y:y + h, x:x + w] == i).astype(np.uint8)
+    inside = cv2.morphologyEx(inside, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))   # 글자 자리까지 덮기
+    return (x, y, w, h), inside > 0
+
+
+def read_tooltip_durability(img):
+    """툴팁의 '내구도: 57 / 64' 에서 (57, 64). 글자 언어 상관없이 '숫자 / 숫자' 를 찾음."""
+    found = find_tooltip(img, with_mask=True)
+    if found is None:
+        return None
+    (x, y, w, h), inside = found
+    img = img[y:y + h, x:x + w]
+    f = img.astype(np.int16)
+    mn, mx = f.min(axis=2), f.max(axis=2)
+    white = ((mn >= 150) & (mx - mn <= 25) & inside).astype(np.uint8)   # 흰/회색 글자 (그림자는 어두워서 빠짐)
+    n, _, st, _ = cv2.connectedComponentsWithStats(white, connectivity=8)
+    chars = []                                    # 글자 하나 = 덩어리 하나 (숫자, '/' 는 한 덩어리)
+    for i in range(1, n):
+        x0, y0, w0, h0, _ = (int(v) for v in st[i])
+        sc = round(h0 / 7)
+        if sc < 1 or sc > 8:
+            continue
+        k = _glyph_of(white[y0:y0 + h0, x0:x0 + w0], sc)
+        if k:
+            chars.append((y0, x0, x0 + w0, sc, k))
+    chars.sort()
+    lines = []                                    # 같은 줄 = 윗변 높이가 같음
+    for ch in chars:
+        if lines and abs(lines[-1][0][0] - ch[0]) <= ch[3]:
+            lines[-1].append(ch)
+        else:
+            lines.append([ch])
+    for ln in lines:
+        ln.sort(key=lambda c: c[1])
+        text, prev = "", None
+        for y0, x0, x1, sc, k in ln:
+            if prev is not None:
+                text += "" if x0 - prev <= 2 * sc else (" " if x0 - prev <= 8 * sc else " | ")
+            text += k
+            prev = x1
+        m = re.search(r"(\d+) ?/ ?(\d+)", text)
+        if m:
+            cur, mx_ = int(m.group(1)), int(m.group(2))
+            if 0 < mx_ and 0 <= cur <= mx_:
+                return cur, mx_
+    return None
+
+
+def hotbar_index(slot, client_w):
+    """선택 칸 테두리(24x24 GUI) 위치로 핫바 몇 번째 칸인지 (0~8)."""
+    x, y, w, h = slot
+    s = w / 24
+    left = client_w / 2 - 91 * s
+    return int(min(8, max(0, round((x + w / 2 - left - 11 * s) / (20 * s)))))

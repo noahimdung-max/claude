@@ -204,6 +204,23 @@ def post_left_click(hwnd):
     user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lp)
 
 
+WM_MOUSEMOVE = 0x0200
+KEYS = {"e": (0x45, 0x12), "esc": (0x1B, 0x01), **{str(i): (0x30 + i, 0x01 + i) for i in range(1, 10)}}
+
+
+def post_key(hwnd, name):
+    """키 한 번 누르고 떼기 (마크는 스캔코드로 키를 구분)."""
+    vk, sc = KEYS[name]
+    user32.PostMessageW(hwnd, WM_KEYDOWN, vk, (sc << 16) | 1)
+    time.sleep(0.04)
+    user32.PostMessageW(hwnd, WM_KEYUP, vk, (sc << 16) | 1 | (1 << 30) | (1 << 31))
+
+
+def post_mouse_move(hwnd, x, y):
+    """창 안쪽 좌표 (x, y) 로 마우스 이동 (인벤 화면용)."""
+    user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF))
+
+
 def post_shift(hwnd, down):
     if down:
         user32.PostMessageW(hwnd, WM_KEYDOWN, VK_SHIFT, (SC_LSHIFT << 16) | 1)

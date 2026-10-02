@@ -20,7 +20,8 @@ import winapi
 
 from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
-                    split_view, view_roi)
+                    split_view, view_roi, load_history, save_history, history_day, find_inventory,
+                    inventory_slots, slot_is_empty, read_tooltip_durability, hotbar_index)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -98,6 +99,14 @@ class Macro:
         self.capture_name = "화면"
         self.run_caught = 0              # 이번 시작 후 낚은 수 (목표용)
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
+        self.depleted = set()            # 이번 시작 후 다 쓴 낚싯대 칸 (1~9)
+        self.exact = None                # 정밀 내구도 {"cur", "max", "slot", "at"(그때 낚은 수)}
+        self.inv_due = True              # 다음 던지기 전에 인벤 확인
+        self.inv_empty = None            # 마지막으로 본 인벤 빈칸 수
+        self.inv_map = None              # 36칸 빈칸 여부 (True = 빈칸)
+        self.inv_note = ""               # 인벤 확인 결과 한 줄
+        self.history = load_history()
+        self._hist_t = None
         self.logger.write("START", f"화면 {self.screen.mon}")
         self.logger.config(cfg)
         self.running = False
@@ -111,7 +120,7 @@ class Macro:
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None, "active": False,
-                      "sub": None, "gauge": None, "dura": None, "caught": 0,
+                      "sub": None, "gauge": None, "dura": None, "dura_max": None, "caught": 0,
                       "casts": 0, "games": 0, "catch_times": [], "colors": {}, "started": None}
         if hotkeys:
             import keyboard
@@ -139,6 +148,10 @@ class Macro:
             self.fails = 0
             self.stats["started"] = time.time()
             self.run_caught = 0
+            self.depleted = set()
+            self.exact = None
+            self.inv_due = True
+            self._hist_t = None
             self.start_at = time.perf_counter() + self.cfg["start_delay_sec"]
             self.out("[시작] " + ("백그라운드 모드로 시작" if self.cfg["background"] else "마크 창으로 전환해서 시작"))
         else:
@@ -409,9 +422,9 @@ class Macro:
     def durability_reading(self):
         """(내구도 숫자, 종류) - 종류: color / low(1~2) / full. 영역 미설정이면 None."""
         c = self.cfg
-        roi = c["durability_roi"] or self.auto_durability_roi()
+        roi = (None if c["rod_swap"] else c["durability_roi"]) or self.auto_durability_roi()
         d = durability_value(self.screen.grab(roi), c["durability_max"]) if roi else None
-        self.stats["dura"] = d
+        self.stats["dura"], self.stats["dura_max"] = d, c["durability_max"]
         return d
 
     def auto_durability_roi(self):
@@ -429,8 +442,15 @@ class Macro:
         return c["durability_max"] * c["durability_stop_pct"] / 100
 
     def durability_ok(self):
+        if self.cfg["durability_ignore"]:
+            return True
+        ex = self.exact_now() if self.cfg["exact_durability"] else None
+        if ex:
+            cur, mx, _ = ex
+            self.stats["dura"], self.stats["dura_max"] = (cur, "exact"), mx
+            return cur > mx * self.cfg["durability_stop_pct"] / 100
         d = self.durability_reading()
-        if d is None or self.cfg["durability_ignore"]:
+        if d is None:
             return True
         val, kind = d
         self.log(f"내구도 {val}/{self.cfg['durability_max']} ({kind})")
@@ -589,6 +609,7 @@ class Macro:
             time.sleep(0.01)
         self.state = "미니게임 중"
         self.stats["games"] += 1
+        self.record(games=1)
         color = None
         if self.last_view is not None and fish is not None:
             color = fish_color_name(split_view(self.last_view, view_roi(c["bar_roi"])[1])[0], fish)
@@ -689,6 +710,9 @@ class Macro:
             self.stats["colors"][color] = self.stats["colors"].get(color, 0) + 1
         self.cfg["total_caught"] = self.cfg.get("total_caught", 0) + 1
         save_config(self.cfg)
+        self.record(caught=1, color=color)
+        if (c["exact_durability"] or c["inv_full_stop"]) and self.run_caught % max(1, c["inv_check_every"]) == 0:
+            self.inv_due = True
         if c["notify_each_catch"]:
             notify(c["discord_webhook"], f"{color or ''} 물고기 낚음 (이번 {self.run_caught}마리)")
         self.logger.write("SUMMARY", f"미니게임 {dur:.1f}초, 끝난 이유: {end_reason}, 프레임 {n}, "
@@ -700,22 +724,166 @@ class Macro:
         if c["reel_click_after_game"]:
             self.right_click()
 
+    # ---------- 기록 ----------
+    def record(self, caught=0, casts=0, games=0, color=None):
+        """오늘 날짜 기록에 더하고 history.json 저장. 낚시한 시간도 같이 누적."""
+        now = time.time()
+        d = history_day(self.history, time.strftime("%Y-%m-%d"))
+        if self._hist_t is not None:
+            d["seconds"] += min(now - self._hist_t, 120)     # 멈췄다 켠 사이 시간은 안 셈
+        self._hist_t = now
+        d["caught"] += caught
+        d["casts"] += casts
+        d["games"] += games
+        if color:
+            d["colors"][color] = d["colors"].get(color, 0) + 1
+        save_history(self.history)
+
+    # ---------- 키/마우스 ----------
+    def _front(self):
+        return not self.hwnd or winapi.is_foreground(self.hwnd)
+
+    def press(self, key):
+        if self.bg_mode and not self._front():
+            winapi.post_key(self.hwnd, key)
+        else:
+            pydirectinput.press(key)
+
+    def move_mouse(self, x, y):
+        """창 안쪽 좌표로 마우스 이동."""
+        if self.bg_mode and not self._front():
+            winapi.post_mouse_move(self.hwnd, x, y)
+        else:
+            ox, oy, _, _ = winapi.client_rect(self.hwnd)
+            pydirectinput.moveTo(int(ox + x), int(oy + y))
+
+    def client_img(self):
+        return self.screen.grab(list(winapi.client_rect(self.hwnd)))
+
+    def hotbar_slot(self):
+        """지금 들고 있는 핫바 칸 (1~9). 못 찾으면 None."""
+        w, h = self.screen.mon["width"], self.screen.mon["height"]
+        sx, sy = int(w * 0.2), int(h * 0.7)
+        slot = selected_slot(self.screen.grab([sx, sy, int(w * 0.6), h - sy]))
+        if not slot:
+            return None
+        cw = w
+        if self.hwnd:
+            cx, _, cw, _ = winapi.client_rect(self.hwnd)
+            sx -= cx
+        x, y, sw, sh = slot
+        self.stats["slot"] = hotbar_index((sx + x, y, sw, sh), cw) + 1
+        return self.stats["slot"]
+
+    # ---------- 인벤 확인 (정밀 내구도 / 빈칸) ----------
+    def inventory_check(self):
+        """E 로 인벤 열고: 빈칸 세기 + 낚싯대 칸에 마우스 올려 툴팁(F3+H) 내구도 읽기 -> 닫기."""
+        c = self.cfg
+        self.inv_due = False
+        if not self.hwnd:
+            self.inv_note = "마크 창을 못 찾아서 인벤 확인 못 함"
+            return
+        slot = self.hotbar_slot()
+        self.state = "인벤 확인 중"
+        self.set_shift(False)
+        _, _, cw, ch = winapi.client_rect(self.hwnd)
+        self.move_mouse(cw // 2, ch // 2)
+        self.press("e")
+        inv, img, end = None, None, time.perf_counter() + 2.0
+        try:
+            while inv is None and time.perf_counter() < end:
+                self.check()
+                time.sleep(0.1)
+                img = self.client_img()
+                inv = find_inventory(img)
+            if inv is None:
+                self.inv_note = "인벤 창을 못 찾음 (리소스팩/크리에이티브면 안 될 수 있음)"
+                return
+            x0, y0, s = inv
+            self.move_mouse(max(0, x0 - 20 * s), y0 + 20 * s)      # 칸 위에 마우스가 있으면 밝아져서 빈칸 오판
+            time.sleep(0.25)
+            img = self.client_img()
+            self.inv_map = [slot_is_empty(img, sl) for sl in inventory_slots(inv)]
+            self.inv_empty = sum(self.inv_map)
+            note = f"빈칸 {self.inv_empty}개"
+            if c["exact_durability"] and slot:
+                sx, sy, size = inventory_slots(inv)[27 + slot - 1]
+                self.move_mouse(sx + size // 2, sy + size // 2)
+                d, end = None, time.perf_counter() + 1.5
+                while d is None and time.perf_counter() < end:
+                    time.sleep(0.15)
+                    d = read_tooltip_durability(self.client_img())
+                if d:
+                    self.exact = {"cur": d[0], "max": d[1], "slot": slot, "at": self.run_caught}
+                    if c["durability_max"] != d[1]:             # 최대 내구도도 정확히 알게 됨 -> 색 추정에도 사용
+                        c["durability_max"] = d[1]
+                        save_config(c)
+                    note += f" / {slot}번 칸 내구도 {d[0]}/{d[1]} (정확)"
+                else:
+                    self.exact = None
+                    note += " / 툴팁 숫자 못 읽음 (마크에서 F3+H 켰는지 확인)"
+            self.inv_note = note
+        finally:
+            self.press("esc")
+            time.sleep(0.3)
+            self.log("인벤 확인: " + self.inv_note)
+            self.out("[인벤] " + self.inv_note)
+
+    def exact_now(self):
+        """정밀 내구도 추정 (마지막 툴팁 값 - 그 뒤로 낚은 수). 다른 칸이면 None."""
+        e = self.exact
+        if not e or e["slot"] != self.hotbar_slot():
+            return None
+        return max(0, e["cur"] - (self.run_caught - e["at"])), e["max"], self.run_caught == e["at"]
+
+    # ---------- 낚싯대 교체 ----------
+    def swap_rod(self):
+        """다음 낚싯대 칸으로. 남은 게 없으면 False."""
+        cur = self.hotbar_slot()
+        if cur:
+            self.depleted.add(cur)
+        slots = [s for s in self.cfg["rod_slots"] if 1 <= s <= 9]
+        order = [s for s in slots if cur is None or s > cur] + [s for s in slots if cur is not None and s < cur]
+        for nxt in order:
+            if nxt in self.depleted:
+                continue
+            self.press(str(nxt))
+            self.exact = None
+            time.sleep(0.4)
+            self.out(f"[교체] 낚싯대 {cur or '?'}번 칸 -> {nxt}번 칸")
+            notify(self.cfg["discord_webhook"], f"낚싯대 교체: {cur or '?'}번 -> {nxt}번 칸")
+            if self.cfg["exact_durability"]:
+                self.inventory_check()
+            if self.durability_ok():
+                return True
+            self.depleted.add(nxt)
+        return False
+
     def cycle(self):
         c = self.cfg
+        if self._hist_t is None:
+            self._hist_t = time.time()
+        if self.inv_due and (c["exact_durability"] or c["inv_full_stop"]):
+            self.inventory_check()
+        if c["inv_full_stop"] and self.inv_empty is not None and self.inv_empty <= c["inv_min_empty"]:
+            self.stop_with(f"인벤 빈칸 {self.inv_empty}개 -> 가득 차서 정지")
         if c["goal_count"] and self.run_caught >= c["goal_count"]:
             self.stop_with(f"목표 {c['goal_count']}마리 달성! -> 정지")
         if c["goal_minutes"] and self.stats["started"] and time.time() - self.stats["started"] >= c["goal_minutes"] * 60:
             self.stop_with(f"{c['goal_minutes']}분 지남 -> 정지")
-        if not self.durability_ok():
+        if not self.durability_ok() and not (c["rod_swap"] and self.swap_rod()):
+            if c["rod_swap"]:
+                self.stop_with("교체할 낚싯대가 더 없어 (모든 칸 내구도 부족) -> 정지")
             val, kind = self.stats["dura"]
             now = "1~2" if kind == "low" else str(val)
-            self.stop_with(f"낚싯대 내구도 {now}/{c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
+            self.stop_with(f"낚싯대 내구도 {now}/{self.stats.get('dura_max') or c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
         self.state = "던지는 중"
         if self.cfg["bite_mode"] in ("bobber", "both"):
             _, m = self.bobber_search_mask()
             self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기
         self.stats["casts"] += 1
+        self.record(casts=1)
         caught_before = self.stats["caught"]
         if self.wait_bite():
             self.right_click()           # 낚기

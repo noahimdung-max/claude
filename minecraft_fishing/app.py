@@ -28,7 +28,7 @@ import keyboard
 
 from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
-                    subtitle_search_roi, view_roi)
+                    subtitle_search_roi, view_roi, load_history)
 from fishing_macro import Macro
 
 HERE = Path(__file__).parent
@@ -133,7 +133,29 @@ SPRITES = {
         "...kRk...",
         "....k....",
     ], {"k": "#3a0a0a", "R": "#e53935", "w": "#ffb3ad"}),
+    "chest": ([
+        ".kkkkkkkkk.",
+        "kBBBBBBBBBk",
+        "kbbbbbbbbbk",
+        "kkkkkGkkkkk",
+        "kBBBkYkBBBk",
+        "kbbbbbbbbbk",
+        "kbbbbbbbbbk",
+        ".kkkkkkkkk.",
+    ], {"k": "#3b2410", "B": "#c08a3e", "b": "#9a6a2c", "G": "#9e9e9e", "Y": "#ffd54f"}),
+    "book": ([
+        "..kkkkkkk",
+        ".kRRRRRRk",
+        "kRRRRRRk.",
+        "kRwwwwRk.",
+        "kRRRRRRk.",
+        "kRRRRRRk.",
+        "kWWWWWWk.",
+        ".kkkkkkk.",
+    ], {"k": "#3a1d1d", "R": "#c0392b", "w": "#ffd54f", "W": "#f5f5f5"}),
 }
+FISH_HEX = {"빨강": "#e53935", "주황": "#fb8c00", "노랑": "#fdd835", "초록": "#43a047", "하늘": "#29b6f6",
+            "파랑": "#1e88e5", "보라": "#8e24aa", "분홍": "#ec407a"}
 CHECK = [
     "........",
     ".......g",
@@ -573,10 +595,10 @@ class App:
         side.pack(side="left", fill="y")
         area = tk.Frame(main, bg=SKY)
         area.pack(side="left", fill="both", expand=True, padx=m, pady=(m, m))
-        self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "setup", "adv", "guide")}
+        self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "log", "rod", "setup", "adv", "guide")}
         self.nav = {}
-        for k, ic, text in (("fish", "rod", "낚시"), ("setup", "bobber", "설정"), ("adv", "emerald", "세부"),
-                             ("guide", "chat", "가이드")):
+        for k, ic, text in (("fish", "fish", "낚시"), ("log", "book", "기록"), ("rod", "rod", "낚싯대"),
+                             ("setup", "bobber", "설정"), ("adv", "emerald", "세부"), ("guide", "chat", "가이드")):
             self.nav[k] = NavItem(side, self.icons[ic], text, lambda k=k: self.show_page(k))
             self.nav[k].pack(padx=6 * S, pady=(8 * S if k == "fish" else 2 * S, 0))
         bottom = tk.Frame(side, bg=SIDEBAR)
@@ -711,6 +733,9 @@ class App:
         self.trace_cv.pack(side="left", padx=(8 * S, 0))
         self.live_photo = None
 
+        self.build_rod_page()
+        self.build_log_page()
+
         self.adv = Panel(self.pages["adv"], "세부 설정", self.icons["emerald"])
         self.adv.pack()
         a = self.adv.content
@@ -763,6 +788,12 @@ class App:
             "밤·물속처럼 어두우면 찌 화면 모드는 어려움 → 자막 모드 사용",
             "낚싯대는 핫바에서 선택한 상태로, 물을 바라보고 시작",
         ]),
+        ("낚싯대 탭 (교체·정밀 내구도·인벤)", [
+            "자동 교체: 낚싯대를 넣은 핫바 칸을 눌러 고르고 켜기. 내구도 기준 아래면 다음 칸으로",
+            "정밀 내구도(실험): 마크에서 F3+H(고급 툴팁) 켜기. N마리마다 인벤을 1~2초 열었다 닫음",
+            "인벤 가득 참: 빈칸 기준 이하면 멈추고 디스코드 알림. 인벤 확인 때 같이 셈",
+            "리소스팩으로 인벤/툴팁 모양이 바뀌면 안 될 수 있음 → '툴팁 숫자 못 읽음'이 뜨면 꺼줘",
+        ]),
         ("다른 창 쓰면서 낚시 (실험)", [
             "마크에서 F3+P 한 번 → '포커스를 잃으면 일시정지' 꺼짐",
             "마크 창은 최소화하지 말고 다른 창 뒤에 두기만",
@@ -791,6 +822,10 @@ class App:
 
     def show_page(self, key):
         self.page = key
+        if key == "log":
+            self.draw_log_page()
+        elif key == "rod":
+            self.draw_rod_page()
         for k, f in self.pages.items():
             f.pack_forget()
             self.nav[k].select(k == key)
@@ -948,6 +983,11 @@ class App:
         if m:
             s = m.stats
             self.draw_pipeline(m)
+            self._tick_n = getattr(self, "_tick_n", 0) + 1
+            if self.page == "rod" and self._tick_n % 5 == 0:
+                self.draw_rod_page()
+            if self.page == "log" and self._tick_n % 30 == 0:
+                self.draw_log_page()
             self.draw_dashboard(m)
             self.draw_live(s)
             if self.cfg["bite_mode"] == "subtitle":
@@ -982,10 +1022,10 @@ class App:
             self.dura_cv.grid_forget()
             return
         val, kind = d
-        mx = self.cfg["durability_max"]
+        mx = (self.macro and self.macro.stats.get("dura_max")) or self.cfg["durability_max"]
         stop = mx * self.cfg["durability_stop_pct"] / 100
         danger = not self.cfg["durability_ignore"] and (kind == "low" or val <= stop)
-        v.config(text=f"{'1~2' if kind == 'low' else val}/{mx}", width=7,
+        v.config(text=f"{'1~2' if kind == 'low' else val}/{mx}" + (" ✓" if kind == "exact" else ""), width=9,
                  fg=MUTED if self.cfg["durability_ignore"] else BAD if danger else OK)
         frac = 0 if kind == "low" else min(1, val / mx)
         r, g, b = colorsys.hsv_to_rgb(frac / 3, 1, 1)
@@ -996,6 +1036,252 @@ class App:
             c.create_rectangle(S, S, S + round(38 * S * frac), 6 * S, outline="",
                                fill="#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255)))
         c.grid(row=0, column=6, sticky="w")
+
+    # ---------- 낚싯대 페이지 ----------
+    def build_rod_page(self):
+        pg, c = self.pages["rod"], self.cfg
+        W = PANEL_W - 30 * S
+
+        def head(panel, var, text, cmd):
+            r = tk.Frame(panel.content, bg=PANEL)
+            r.pack(fill="x")
+            PixelCheck(r, text, var, cmd).pack(side="left")
+            return r
+
+        def desc(panel, text):
+            label(panel.content, text, fg=MUTED, wraplength=W, justify="left").pack(anchor="w", pady=(4 * S, 0))
+
+        # 자동 교체
+        p = Panel(pg, "낚싯대 자동 교체", self.icons["rod"])
+        p.pack()
+        self.swap_var = tk.BooleanVar(value=c["rod_swap"])
+        head(p, self.swap_var, "켜기", self.save_rod)
+        desc(p, "내구도가 멈춤 기준(낚시 탭의 %) 아래로 내려가면 아래에서 고른 칸 중 다음 칸으로 바꿔서 계속 낚아. "
+                "고른 칸을 다 쓰면 멈춤. 칸을 눌러서 고르기")
+        self.slot_cv = tk.Canvas(p.content, width=W, height=58 * S, bg=PANEL, highlightthickness=0, cursor="hand2")
+        self.slot_cv.pack(pady=(8 * S, 0))
+        self.slot_cv.bind("<Button-1>", self.click_slot)
+        self.swap_lbl = label(p.content, "", fg=MUTED)
+        self.swap_lbl.pack(anchor="w", pady=(4 * S, 0))
+
+        # 정밀 내구도
+        p = Panel(pg, "정밀 내구도  (실험)", self.icons["chat"])
+        p.pack(pady=(8 * S, 0))
+        self.exact_var = tk.BooleanVar(value=c["exact_durability"])
+        head(p, self.exact_var, "켜기", self.save_rod)
+        desc(p, "인벤을 잠깐 열어 낚싯대에 마우스를 올리고, 툴팁의 '내구도: 57 / 64' 숫자를 그대로 읽어. "
+                "마크에서 F3+H(고급 툴팁)를 한 번 눌러둬야 해. 최대 내구도도 자동으로 맞춰짐")
+        r = tk.Frame(p.content, bg=PANEL)
+        r.pack(fill="x", pady=(8 * S, 0))
+        label(r, "인벤 확인: ").pack(side="left")
+        self.every_var = tk.StringVar(value=str(c["inv_check_every"]))
+        spinbox(r, self.every_var, 1, 200, 1).pack(side="left")
+        label(r, " 마리마다").pack(side="left")
+        PixelButton(r, "다음에 바로 확인", self.check_now, "green").pack(side="right")
+        self.every_var.trace_add("write", lambda *a: self.save_rod())
+
+        # 인벤토리
+        p = Panel(pg, "인벤토리 가득 참", self.icons["chest"])
+        p.pack(pady=(8 * S, 0))
+        self.full_var = tk.BooleanVar(value=c["inv_full_stop"])
+        r = head(p, self.full_var, "빈칸이 없으면 멈춤", self.save_rod)
+        self.min_empty_var = tk.StringVar(value=str(c["inv_min_empty"]))
+        label(r, " 개 이하").pack(side="right")
+        spinbox(r, self.min_empty_var, 0, 35, 1).pack(side="right")
+        label(r, "빈칸 ").pack(side="right")
+        self.min_empty_var.trace_add("write", lambda *a: self.save_rod())
+        desc(p, "꽉 차면 낚은 물고기가 바닥에 떨어져서 손해. 위 '인벤 확인' 때 같이 셈")
+        self.inv_cv = tk.Canvas(p.content, width=W, height=96 * S, bg=PANEL, highlightthickness=0)
+        self.inv_cv.pack(pady=(8 * S, 0))
+        self.inv_lbl = label(p.content, "아직 확인 안 함", fg=MUTED)
+        self.inv_lbl.pack(anchor="w", pady=(4 * S, 0))
+        self.draw_rod_page()
+
+    def click_slot(self, e):
+        n = int(e.x // (int(self.slot_cv["width"]) / 9)) + 1
+        slots = set(self.cfg["rod_slots"])
+        slots ^= {n}
+        self.cfg["rod_slots"] = sorted(slots)
+        save_config(self.cfg)
+        self.draw_rod_page()
+
+    def save_rod(self):
+        c = self.cfg
+        c["rod_swap"], c["exact_durability"], c["inv_full_stop"] = (
+            self.swap_var.get(), self.exact_var.get(), self.full_var.get())
+        try:
+            c["inv_check_every"] = max(1, int(float(self.every_var.get() or 1)))
+            c["inv_min_empty"] = max(0, int(float(self.min_empty_var.get() or 0)))
+        except ValueError:
+            pass
+        save_config(c)
+        if c["rod_swap"] and c["durability_ignore"]:
+            self.log("자동 교체는 내구도를 봐야 해: 낚시 탭의 '안 봄'을 꺼줘", "warn")
+
+    def check_now(self):
+        if self.macro and self.macro.running:
+            self.macro.inv_due = True
+            self.log("다음 던지기 전에 인벤 확인할게", "good")
+        else:
+            self.log("낚시 중일 때 눌러줘 (던지기 전에 인벤을 열어 확인)", "warn")
+
+    def draw_rod_page(self):
+        m = getattr(self, "macro", None)
+        cur = m.stats.get("slot") if m else None
+        dep = m.depleted if m else set()
+        cv = self.slot_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        bw = W / 9
+        for i in range(1, 10):
+            x0 = (i - 1) * bw + 3 * S
+            on = i in self.cfg["rod_slots"]
+            fill = SOFT if not on else (LINE if i in dep else ACCENT)
+            round_rect(cv, x0, 4 * S, x0 + bw - 6 * S, H - 16 * S, 10 * S, fill=fill,
+                       outline=TXT if i == cur else "", width=2 * S)
+            cv.create_text(x0 + (bw - 6 * S) / 2, (H - 12 * S) / 2, text=str(i), font=FONTS["m"],
+                           fill="#ffffff" if on and i not in dep else MUTED)
+            if on:
+                cv.create_text(x0 + (bw - 6 * S) / 2, H - 6 * S, font=FONTS["r"], fill=MUTED,
+                               text="다 씀" if i in dep else ("사용 중" if i == cur else "대기"))
+        self.swap_lbl.config(text=f"고른 칸: {', '.join(map(str, self.cfg['rod_slots'])) or '없음'}"
+                                  + (f"  ·  지금 {cur}번 칸" if cur else ""))
+        # 인벤 36칸
+        cv = self.inv_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        inv_map = m.inv_map if m else None
+        cs = min((W - 8 * S) / 9, (H - 10 * S) / 4)
+        ox = (W - cs * 9) / 2
+        for k in range(36):
+            r, col = divmod(k, 9)
+            y = r * cs + (8 * S if r == 3 else 0)                 # 핫바는 살짝 띄움
+            x = ox + col * cs
+            full = inv_map is not None and not inv_map[k]
+            round_rect(cv, x + 2 * S, y + 2 * S, x + cs - 2 * S, y + cs - 2 * S, 5 * S,
+                       fill=MUTED if full else PANEL, outline="" if full else LINE, width=S)
+        if m and m.inv_empty is not None:
+            self.inv_lbl.config(text=m.inv_note,
+                                fg=BAD if m.inv_empty <= self.cfg["inv_min_empty"] else TXT)
+
+    # ---------- 기록 페이지 ----------
+    def build_log_page(self):
+        pg = self.pages["log"]
+        W = PANEL_W - 30 * S
+        p = Panel(pg, "날짜별 기록", self.icons["book"])
+        p.pack()
+        self.tiles_cv = tk.Canvas(p.content, width=W, height=92 * S, bg=PANEL, highlightthickness=0)
+        self.tiles_cv.pack()
+        p = Panel(pg, "최근 14일 낚은 수", self.icons["fish"])
+        p.pack(pady=(8 * S, 0))
+        self.days_cv = tk.Canvas(p.content, width=W, height=170 * S, bg=PANEL, highlightthickness=0)
+        self.days_cv.pack()
+        self.days_cv.bind("<Motion>", lambda e: self.draw_log_page(hover=e.x))
+        self.days_cv.bind("<Leave>", lambda e: self.draw_log_page())
+        p = Panel(pg, "물고기 색 (전체 기간)", self.icons["emerald"])
+        p.pack(pady=(8 * S, 0))
+        self.colors_cv = tk.Canvas(p.content, width=W, height=30 * S, bg=PANEL, highlightthickness=0)
+        self.colors_cv.pack()
+        self.draw_log_page()
+
+    def draw_log_page(self, hover=None):
+        import datetime as dt
+        hist = self.macro.history if getattr(self, "macro", None) else load_history()
+        today = dt.date.today()
+        days = [(today - dt.timedelta(days=13 - i)) for i in range(14)]
+        get = lambda d: hist.get(d.isoformat(), {})
+
+        def agg(keys):
+            out = {"caught": 0, "casts": 0, "seconds": 0}
+            for k in keys:
+                for f in out:
+                    out[f] += hist.get(k, {}).get(f, 0)
+            return out
+
+        def fmt_t(sec):
+            m = int(sec // 60)
+            return f"{m // 60}시간 {m % 60}분" if m >= 60 else f"{m}분"
+
+        tiles = [("오늘", agg([today.isoformat()])),
+                 ("어제", agg([(today - dt.timedelta(days=1)).isoformat()])),
+                 ("최근 7일", agg([d.isoformat() for d in days[-7:]])),
+                 ("전체", agg(hist.keys()))]
+        cv = self.tiles_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        gap = 6 * S
+        tw = (W - 3 * gap) / 4
+        for i, (name, a) in enumerate(tiles):
+            x0 = i * (tw + gap)
+            round_rect(cv, x0, 0, x0 + tw, H, 12 * S, fill=SOFT, outline="")
+            cv.create_text(x0 + tw / 2, 15 * S, text=name, font=FONTS["r"], fill=MUTED)
+            cv.create_text(x0 + tw / 2, 38 * S, text=f"{a['caught']}마리", font=FONTS["m"],
+                           fill=ACCENT if i == 0 else TXT)
+            ph = a["caught"] / (a["seconds"] / 3600) if a["seconds"] >= 300 else None
+            cv.create_text(x0 + tw / 2, 60 * S, font=FONTS["r"], fill=MUTED, text=fmt_t(a["seconds"]))
+            if ph:
+                cv.create_text(x0 + tw / 2, 77 * S, font=FONTS["r"], fill=MUTED, text=f"시간당 {ph:.0f}마리")
+
+        # 14일 막대
+        cv = self.days_cv
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        top_pad, bot = 26 * S, 22 * S
+        vals = [get(d).get("caught", 0) for d in days]
+        vmax = max(vals) or 1
+        bw = W / 14
+        base = H - bot
+        cv.create_line(0, base, W, base, fill=LINE, width=S)
+        hi = None if hover is None else min(13, max(0, int(hover // bw)))
+        for i, (d, v) in enumerate(zip(days, vals)):
+            x0, x1 = i * bw + 4 * S, (i + 1) * bw - 4 * S
+            h = (base - top_pad) * v / vmax
+            if v:
+                col = ACCENT if (hi is None or hi == i) else LINE
+                round_rect(cv, x0, base - max(h, 4 * S), x1, base + 4 * S, 4 * S, fill=col, outline="")
+                cv.create_rectangle(x0, base, x1, base + 4 * S, fill=PANEL, outline="")
+            if i % 2 == 1 or i == 13:
+                cv.create_text((x0 + x1) / 2, base + 11 * S, font=FONTS["r"], fill=MUTED,
+                               text="오늘" if i == 13 else f"{d.month}/{d.day}")
+        if hi is not None:
+            e = get(days[hi])
+            casts = e.get("casts", 0)
+            rate = f" · 성공 {e.get('caught', 0) / casts:.0%}" if casts else ""
+            text = f"{days[hi].month}/{days[hi].day}  {e.get('caught', 0)}마리 · {fmt_t(e.get('seconds', 0))}{rate}"
+            cv.create_text(W / 2, 10 * S, text=text, font=FONTS["b"], fill=TXT)
+        else:
+            i = int(np.argmax(vals))
+            if vals[i]:
+                cv.create_text(W / 2, 10 * S, text=f"가장 많이: {days[i].month}/{days[i].day} {vals[i]}마리  "
+                                                  "(막대에 마우스를 올리면 자세히)", font=FONTS["r"], fill=MUTED)
+            else:
+                cv.create_text(W / 2, (base + top_pad) / 2, text="아직 기록이 없어. 낚시하면 여기에 쌓여",
+                               font=FONTS["r"], fill=MUTED)
+
+        # 색 분포
+        colors = {}
+        for e in hist.values():
+            for k, v in e.get("colors", {}).items():
+                colors[k] = colors.get(k, 0) + v
+        items = sorted(colors.items(), key=lambda kv: -kv[1])
+        cv = self.colors_cv
+        rh = 24 * S
+        cv.configure(height=max(30 * S, rh * len(items)))
+        cv.delete("all")
+        W = int(cv["width"])
+        if not items:
+            cv.create_text(W / 2, 15 * S, text="색은 미니게임 시작할 때 물고기 색으로 기록돼", font=FONTS["r"], fill=MUTED)
+        total = sum(colors.values()) or 1
+        vmax = items[0][1] if items else 1
+        for i, (name, v) in enumerate(items):
+            y = i * rh + rh / 2
+            cv.create_oval(2 * S, y - 6 * S, 14 * S, y + 6 * S, fill=FISH_HEX.get(name, MUTED), outline="")
+            cv.create_text(22 * S, y, text=name, anchor="w", font=FONTS["b"], fill=TXT)
+            x0, x1 = 64 * S, W - 118 * S
+            round_rect(cv, x0, y - 5 * S, x1, y + 5 * S, 5 * S, fill=SOFT, outline="")
+            round_rect(cv, x0, y - 5 * S, x0 + max(10 * S, (x1 - x0) * v / vmax), y + 5 * S, 5 * S,
+                       fill=FISH_HEX.get(name, MUTED), outline="")
+            cv.create_text(W - 2 * S, y, text=f"{v}마리 · {v / total:.0%}", anchor="e", font=FONTS["r"], fill=TXT)
 
     STEPS = [("던지기", ("던지는",)), ("입질 대기", ("자리잡는", "입질 기다리는")),
              ("미니게임", ("미니게임",)), ("다시 던지기", ("다시 던지기",))]
@@ -1045,8 +1331,7 @@ class App:
             for w in self.chips.winfo_children():
                 w.destroy()
             label(self.chips, f"지금까지 총 {self.cfg.get('total_caught', 0)}마리", "b").pack(side="left")
-            hexes = {"빨강": "#e53935", "주황": "#fb8c00", "노랑": "#fdd835", "초록": "#43a047", "하늘": "#29b6f6",
-                     "파랑": "#1e88e5", "보라": "#8e24aa", "분홍": "#ec407a"}
+            hexes = FISH_HEX
             for name, cnt in sorted(s["colors"].items(), key=lambda kv: -kv[1]):
                 chip = tk.Canvas(self.chips, width=12 * S, height=12 * S, bg=PANEL, highlightthickness=0)
                 chip.create_oval(1, 1, 12 * S - 1, 12 * S - 1, fill=hexes.get(name, MUTED), outline="")

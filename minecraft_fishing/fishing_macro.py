@@ -218,6 +218,25 @@ class Macro:
             return "post"
         return "real"
 
+    def _clicker(self, stop_ev):
+        """미니게임 중 좌클릭 연타 (물고기가 빨리 올라옴). 조작 루프가 안 느려지게 따로 돔."""
+        gap = 1.0 / self.cfg["left_click_cps"]
+        nxt = time.perf_counter()
+        while not stop_ev.is_set():
+            front = not self.hwnd or winapi.is_foreground(self.hwnd)
+            try:
+                if front:
+                    pydirectinput.mouseDown(button="left")
+                    time.sleep(0.015)
+                    pydirectinput.mouseUp(button="left")
+                elif self.bg_mode:
+                    winapi.post_left_click(self.hwnd)
+                # 일반 모드에서 마크가 뒤에 있으면 다른 창을 누르지 않게 건너뜀
+            except Exception:
+                return
+            nxt = max(nxt + gap, time.perf_counter())
+            stop_ev.wait(nxt - time.perf_counter())
+
     def _send_shift(self, method, down):
         if method == "post":
             winapi.post_shift(self.hwnd, down)
@@ -585,6 +604,9 @@ class Macro:
         lost_img, lost_n = None, 0
         nozone_since = None
         end_reason = "물고기/게이지 사라짐"
+        clicking = threading.Event()
+        if c["left_click_cps"] > 0:
+            threading.Thread(target=self._clicker, args=(clicking,), daemon=True).start()
         try:
             while True:
                 self.check()
@@ -657,6 +679,7 @@ class Macro:
                                               f"shift={'O' if self.shift_down else 'X'} 게이지={g}")
                 time.sleep(0.005)
         finally:
+            clicking.set()
             self.set_shift(False)
         dur = time.perf_counter() - t0
         self.stats["caught"] += 1

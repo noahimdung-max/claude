@@ -51,6 +51,7 @@ DEFAULTS = {
     "minigame_start_timeout_sec": 4.0,
     "minigame_end_missing_sec": 0.6,
     "deadzone_px": 3,            # 바-물고기 오차 허용 범위
+    "left_click_cps": 10,        # 미니게임 중 좌클릭 연타 (초당 횟수, 0 = 끔)
     "lead_sec": 0.05,            # 바 속도 기반 예측 시간
     "reel_click_after_game": False,  # 미니게임 끝나고 우클릭 한 번 더 필요하면 true
     "recast_delay_sec": 1.0,

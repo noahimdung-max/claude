@@ -57,6 +57,8 @@ if IS_WIN:
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
 MK_RBUTTON = 0x0002
+WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0201, 0x0202
+MK_LBUTTON = 0x0001
 VK_SHIFT, SC_LSHIFT = 0x10, 0x2A
 PW_RENDERFULLCONTENT = 0x00000002
 PW_CLIENTONLY = 0x00000001
@@ -193,6 +195,13 @@ def post_right_click(hwnd):
     user32.PostMessageW(hwnd, WM_RBUTTONDOWN, MK_RBUTTON, lp)
     time.sleep(0.05)
     user32.PostMessageW(hwnd, WM_RBUTTONUP, 0, lp)
+
+
+def post_left_click(hwnd):
+    lp = _lparam_xy(hwnd)
+    user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lp)
+    time.sleep(0.015)
+    user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lp)
 
 
 def post_shift(hwnd, down):

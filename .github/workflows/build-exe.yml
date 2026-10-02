@@ -9,7 +9,7 @@ on:
         default: "1.0.0"
   push:
     branches: ["claude/bold-darwin-1zygnn"]
-    paths: [".github/workflows/build-exe.yml"]
+    paths: [".github/workflows/build-exe.yml", "minecraft_fishing/ci_test_winapi.py", "minecraft_fishing/winapi.py"]
 
 permissions:
   contents: write
@@ -32,6 +32,8 @@ jobs:
 
       - name: Test background-mode Windows APIs
         timeout-minutes: 3
+        env:
+          PYTHONIOENCODING: utf-8
         run: python ci_test_winapi.py
 
       - name: Build exe

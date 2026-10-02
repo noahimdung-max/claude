@@ -102,10 +102,10 @@ class Macro:
     # ---------- 입력 ----------
     def missing_setup(self):
         c = self.cfg
-        if c["bite_mode"] == "subtitle":
+        if c["bite_mode"] in ("subtitle", "both"):
             if not c["subtitle_roi"] or self.subtitle_template() is None:
                 return "입질 자막을 먼저 지정해야 함"
-        elif not c["bobber_roi"]:
+        if c["bite_mode"] in ("bobber", "both") and not c["bobber_roi"]:
             return "찌 영역을 먼저 지정해야 함"
         return None
 
@@ -400,14 +400,15 @@ class Macro:
     def wait_bite(self):
         if self.cfg["bite_mode"] == "subtitle":
             return self.wait_bite_subtitle()
-        return self.wait_bite_bobber()
+        return self.wait_bite_bobber()          # bobber / both
 
-    def wait_bite_subtitle(self):
+    def wait_bite_subtitle(self, settled=False):
         """자막 '낚시찌 첨벙'이 뜨면 입질. (기존 마크 자동낚시 프로그램들이 쓰는 방식)"""
         c = self.cfg
         thr = c["subtitle_threshold"]
-        self.state = "찌 자리잡는 중"
-        self.sleep(c["cast_settle_sec"])
+        if not settled:
+            self.state = "찌 자리잡는 중"
+            self.sleep(c["cast_settle_sec"])
 
         # 던질 때/이전 입질 때 뜬 자막이 사라질 때까지 기다린 뒤 감시 시작
         t_end = time.perf_counter() + 5.0
@@ -437,50 +438,82 @@ class Macro:
         self.out("입질 시간초과 -> 다시 던짐")
         return False
 
+    def bobber_frame(self, track):
+        """추적 영역에서 (빨강 픽셀 수, 찌 중심 y, 흰 물보라 비율, 원본 이미지)."""
+        img = self.screen.grab(track)
+        red = bobber_mask(img)
+        n = int(red.sum())
+        y = float(np.nonzero(red)[0].mean()) if n >= self.cfg["min_pixels"] else None
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        white = (hsv[..., 1] <= 40) & (hsv[..., 2] >= 200)
+        self.stats["bobber_n"], self.stats["bobber_y"] = n, y
+        return n, y, float(white.mean()), img
+
     def wait_bite_bobber(self):
-        """(예비) 찌 화면 감시. 찌의 평소 흔들림을 재서 그보다 확실히 크게 변할 때만 입질."""
+        """찌 실시간 감지: 찌 높이를 계속 추적(평소 출렁임 범위를 계속 갱신)해서 푹 꺼지거나,
+        찌 주변에 흰 물보라가 갑자기 튀면 입질. 'both' 모드면 자막도 같이 봄."""
         c = self.cfg
+        both = c["bite_mode"] == "both"
         self.state = "찌 자리잡는 중"
         self.sleep(c["cast_settle_sec"])
         track = self.locate_bobber()
         if track is None:
-            self.out("찌를 못 찾음 -> 다시 던짐 (물 쪽을 보고 있는지, 찌 영역이 물을 덮는지 확인)")
-            return False
-        self.log(f"찌 추적 영역 {track}")
-        counts, ys = [], []
-        t_end = time.perf_counter() + 1.0
-        while time.perf_counter() < t_end:
-            self.check()
-            n, y = self.bobber(track)
-            if y is not None:
-                counts.append(n)
-                ys.append(y)
-            time.sleep(0.02)
-        if len(counts) < 10:
-            self.out("찌가 계속 안 보임 -> 다시 던짐")
-            return False
-        base_n, base_y = float(np.median(counts)), float(np.median(ys))
-        noise_y, noise_n = max(ys) - min(ys), max(counts) - min(counts)
-        dip_thr = max(c["bite_dip_px"], 2 * noise_y + 2, 0.35 * self.bobber_h)
-        drop_thr = min(base_n * c["bite_drop_ratio"], base_n - 3 * noise_n)
-        self.log(f"기준 찌 px={base_n:.0f} (입질<{drop_thr:.0f}), 흔들림 {noise_y:.1f}px (입질>{dip_thr:.1f}px)")
+            if not both:
+                self.out("찌를 못 찾음 -> 다시 던짐 (물 쪽을 보고 있는지, 찌 영역이 물을 덮는지 확인)")
+                return False
+            self.out("찌를 못 찾음 -> 자막으로만 감지")
+            return self.wait_bite_subtitle(settled=True)
 
-        self.state = "입질 기다리는 중 (찌)"
+        hist = []                         # 최근 1.5초 (시각, 빨강 수, y, 물보라)
+        trace = self.stats.setdefault("trace", [])
+        trace.clear()
+        self.state = "입질 기다리는 중 (찌" + (" + 자막)" if both else ")")
         deadline = time.perf_counter() + c["bite_timeout_sec"]
-        hits, next_log = 0, 0.0
+        warm_until = time.perf_counter() + 1.0  # 처음 1초는 평소 상태만 배움
+        hits, lost_since = 0, None
+        thr = c["subtitle_threshold"]
         while time.perf_counter() < deadline:
             self.check()
-            n, y = self.bobber(track)
-            dip = None if y is None else y - base_y
-            if time.perf_counter() > next_log:
-                self.log(f"찌 px={n} 내려감={'-' if dip is None else f'{dip:+.1f}'}")
-                next_log = time.perf_counter() + 0.25
-            bite = n < drop_thr or (dip is not None and dip > dip_thr)
+            now = time.perf_counter()
+            n, y, splash, img = self.bobber_frame(track)
+            if both and (self.subtitle_score() or 0) >= thr:
+                self.out(f"입질! (자막 {self.stats['sub']:.0%})")
+                self.bite_img = img
+                return True
+
+            hist = [h for h in hist if now - h[0] <= 1.5]
+            ys = [h[2] for h in hist if h[2] is not None]
+            ns = [h[1] for h in hist]
+            sp = [h[3] for h in hist]
+            dip = drop = burst = False
+            if ys and now > warm_until:
+                med_y, med_n, med_sp = float(np.median(ys)), float(np.median(ns)), float(np.median(sp))
+                noise_y = float(np.median(np.abs(np.array(ys) - med_y))) * 1.5 + 1
+                noise_sp = float(np.median(np.abs(np.array(sp) - med_sp))) * 1.5 + 0.002
+                dip_thr = max(c["bite_dip_px"], 4 * noise_y, 0.35 * self.bobber_h)
+                dy = None if y is None else y - med_y
+                dip = dy is not None and dy > dip_thr
+                drop = n < med_n * c["bite_drop_ratio"]
+                burst = splash > med_sp + max(0.02, 6 * noise_sp)
+                trace.append((0 if dy is None else dy / max(dip_thr, 1), (splash - med_sp) / max(0.02, 6 * noise_sp)))
+                del trace[:-120]
+            if y is None:
+                lost_since = lost_since or now
+                if now - lost_since > 2.0 and not (dip or drop):
+                    self.out("찌가 화면에서 사라짐 -> 다시 던짐")
+                    return False
+            else:
+                lost_since = None
+            self.stats["bobber_view"] = img
+            bite = dip or drop or burst
             hits = hits + 1 if bite else 0
             if hits >= c["bite_confirm_frames"]:
-                self.bite_img = self.screen.grab(track)
-                self.out(f"입질! (찌 px {base_n:.0f}->{n}, 내려감 {'-' if dip is None else f'{dip:.1f}'}px)")
+                why = "+".join(k for k, v in (("가라앉음", dip or drop), ("물보라", burst)) if v)
+                self.out(f"입질! (찌 {why})")
+                self.bite_img = img
                 return True
+            if not bite:
+                hist.append((now, n, y, splash))
             time.sleep(0.01)
         self.out("입질 시간초과 -> 다시 던짐")
         return False
@@ -611,7 +644,7 @@ class Macro:
             alert(msg)
             raise Stop
         self.state = "던지는 중"
-        if self.cfg["bite_mode"] == "bobber":
+        if self.cfg["bite_mode"] in ("bobber", "both"):
             _, m = self.bobber_search_mask()
             self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기

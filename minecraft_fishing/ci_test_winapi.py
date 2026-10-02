@@ -60,7 +60,7 @@ try:
     t = time.perf_counter()
     for _ in range(20):
         winapi.capture_client(hwnd)
-    print(f"INFO PrintWindow 1280x720: {(time.perf_counter() - t) / 20 * 1000:.1f} ms/장", flush=True)
+    print(f"INFO PrintWindow 1280x720: {(time.perf_counter() - t) / 20 * 1000:.1f} ms/frame", flush=True)
 
     try:
         wgc = winapi.WGCScreen(hwnd)
@@ -74,7 +74,7 @@ try:
         t = time.perf_counter()
         for _ in range(200):
             wgc.grab([x + 100, y + 100, 400, 20])
-        print(f"INFO WGC grab: {(time.perf_counter() - t) / 200 * 1000:.2f} ms/번", flush=True)
+        print(f"INFO WGC grab: {(time.perf_counter() - t) / 200 * 1000:.2f} ms/grab", flush=True)
         wgc.stop()
     except Exception as e:
         import traceback

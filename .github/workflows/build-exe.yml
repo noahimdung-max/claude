@@ -1,0 +1,54 @@
+name: build-exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: minecraft_fishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow pyinstaller
+
+      - name: Build exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name MinecraftFishingMacro
+          --icon icon.ico
+          --add-data "fonts;fonts"
+          --hidden-import app
+          MacroStart.pyw
+
+      - name: Smoke test (import)
+        run: python -c "import app, fishing_macro, common; print('import ok')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinecraftFishingMacro
+          path: minecraft_fishing/dist/MinecraftFishingMacro.exe
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: minecraft_fishing/dist/MinecraftFishingMacro.exe
+          body: |
+            마인크래프트 낚시 매크로 (Windows 10/11 64비트)
+
+            `MinecraftFishingMacro.exe` 하나만 받아서 실행하면 돼요. 설치 필요 없음.
+            설정(config.json, subtitle.png)은 exe 와 같은 폴더에 저장돼요.
+            사용법은 저장소 README 참고.

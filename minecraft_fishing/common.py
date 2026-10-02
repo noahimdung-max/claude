@@ -1,5 +1,6 @@
 import colorsys
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -7,8 +8,10 @@ import mss
 import numpy as np
 
 HERE = Path(__file__).parent
-CONFIG_PATH = HERE / "config.json"
-SUBTITLE_PATH = HERE / "subtitle.png"
+# exe 로 실행하면 설정은 exe 옆에 저장 (임시 폴더에 두면 끌 때 사라짐)
+DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else HERE
+CONFIG_PATH = DATA_DIR / "config.json"
+SUBTITLE_PATH = DATA_DIR / "subtitle.png"
 
 DEFAULTS = {
     "monitor": 1,

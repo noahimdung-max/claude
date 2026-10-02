@@ -3,8 +3,9 @@ import os
 import sys
 import traceback
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.getcwd())
+BASE = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+os.chdir(BASE)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import app
     app.App().run()

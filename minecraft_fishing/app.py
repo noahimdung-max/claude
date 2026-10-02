@@ -34,14 +34,19 @@ from fishing_macro import Macro
 HERE = Path(__file__).parent
 
 # ---------------------------------------------------------------- 색상
-SKY = "#bfe6f7"
-PANEL, HI, SH, OUT, TXT = "#c6c6c6", "#ffffff", "#555555", "#000000", "#3f3f3f"
-SLOT, SLOT_HI, SLOT_SH = "#8b8b8b", "#ffffff", "#373737"
-OK, BAD, MUTED = "#2e7d32", "#c62828", "#6d6d6d"
-BTN = {  # 면, 밝은 테두리, 어두운 테두리, 마우스 올렸을 때 면
-    "gray": ("#a0a0a0", "#dcdcdc", "#5a5a5a", "#8c9fe0"),
-    "green": ("#43a047", "#8be08e", "#1b5e20", "#5cc160"),
-    "red": ("#d9443a", "#f59a92", "#8e2219", "#ea5d52"),
+SKY = "#fff4ea"                  # 창 배경 (크림)
+PANEL = "#ffffff"                # 카드
+LINE = "#f1dccb"                 # 카드 테두리
+SOFT = "#fdebdd"                 # 입력칸/트랙 (살구)
+ACCENT = "#dc4655"               # 코랄
+TXT, MUTED = "#3a2b2b", "#a08d82"
+OK, BAD = "#2e9e6b", "#dc4655"
+SLOT = SOFT
+BTN = {  # 면, 글자, 테두리, 마우스 올렸을 때 면
+    "gray": ("#fdebdd", "#3a2b2b", "#f1dccb", "#fbdcc8"),
+    "green": ("#dc4655", "#ffffff", "#dc4655", "#e55d6a"),
+    "red": ("#3a2b2b", "#ffffff", "#3a2b2b", "#56403f"),
+    "mint": ("#d4f1ea", "#1f6f5c", "#d4f1ea", "#c3eae0"),
 }
 
 # ---------------------------------------------------------------- 픽셀 아트
@@ -135,11 +140,14 @@ def register_fonts():
 
 
 def setup_fonts(root):
-    fam = "Galmuri11" if "Galmuri11" in tkfont.families(root) else "맑은 고딕"
-    FONTS["r"] = tkfont.Font(root, family=fam, size=-12 * S)
-    FONTS["b"] = tkfont.Font(root, family=fam, size=-12 * S, weight="bold")
-    FONTS["t"] = tkfont.Font(root, family=fam, size=-24 * S, weight="bold")
-    FONTS["m"] = tkfont.Font(root, family=fam, size=-16 * S, weight="bold")
+    fams = tkfont.families(root)
+    pix = "Galmuri11" if "Galmuri11" in fams else "맑은 고딕"
+    body = next((f for f in ("맑은 고딕", "Malgun Gothic", "NanumGothic", "NanumBarunGothic") if f in fams), pix)
+    FONTS["r"] = tkfont.Font(root, family=body, size=-13 * S)
+    FONTS["b"] = tkfont.Font(root, family=body, size=-13 * S, weight="bold")
+    FONTS["h"] = tkfont.Font(root, family=body, size=-15 * S, weight="bold")
+    FONTS["t"] = tkfont.Font(root, family=pix, size=-24 * S, weight="bold")
+    FONTS["m"] = tkfont.Font(root, family=body, size=-17 * S, weight="bold")
 
 
 def sprite(name, scale):
@@ -153,31 +161,27 @@ def sprite(name, scale):
     return img
 
 
-def bevel(cv, x0, y0, x1, y1, face, hi, sh, bg, tag=""):
-    """마크 GUI 느낌 테두리: 검은 외곽 + 밝은 위/왼쪽 + 어두운 아래/오른쪽, 모서리 따냄."""
-    o, b = S, 2 * S
-    kw = {"outline": "", "tags": tag}
-    cv.create_rectangle(x0, y0, x1, y1, fill=OUT, **kw)
-    cv.create_rectangle(x0 + o, y0 + o, x1 - o, y1 - o, fill=sh, **kw)
-    cv.create_rectangle(x0 + o, y0 + o, x1 - o - b, y1 - o - b, fill=hi, **kw)
-    cv.create_rectangle(x0 + o + b, y0 + o + b, x1 - o - b, y1 - o - b, fill=face, **kw)
-    for cx, cy in ((x0, y0), (x1 - o, y0), (x0, y1 - o), (x1 - o, y1 - o)):
-        cv.create_rectangle(cx, cy, cx + o, cy + o, fill=bg, **kw)
+def round_rect(cv, x0, y0, x1, y1, r, **kw):
+    """둥근 사각형."""
+    r = max(0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1,
+           x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+    return cv.create_polygon(pts, smooth=True, splinesteps=24, **kw)
 
 
-def slot(cv, x0, y0, x1, y1, fill=SLOT, tag=""):
-    """인벤토리 칸처럼 움푹 들어간 상자."""
-    kw = {"outline": "", "tags": tag}
-    cv.create_rectangle(x0, y0, x1, y1, fill=SLOT_SH, **kw)
-    cv.create_rectangle(x0 + S, y0 + S, x1, y1, fill=SLOT_HI, **kw)
-    cv.create_rectangle(x0 + S, y0 + S, x1 - S, y1 - S, fill=fill, **kw)
+def slot(cv, x0, y0, x1, y1, fill=SOFT, tag=""):
+    """살구색 둥근 칸 (트랙/입력칸)."""
+    round_rect(cv, x0, y0, x1, y1, min(12 * S, (y1 - y0) / 2), fill=fill, outline="", tags=tag)
 
 
 # ---------------------------------------------------------------- 위젯
 class PixelButton(tk.Canvas):
-    def __init__(self, parent, text, command, variant="gray", width=None, height=None, font=None, bg=PANEL):
+    """알약 모양 버튼. variant: gray(살구) / green(코랄) / red(진갈색) / mint"""
+
+    def __init__(self, parent, text, command, variant="gray", width=None, height=None, font=None, bg=None):
         self.font = font or FONTS["b"]
-        super().__init__(parent, width=width or self.font.measure(text) + 24 * S, height=height or 22 * S,
+        bg = bg or parent["bg"]
+        super().__init__(parent, width=width or self.font.measure(text) + 30 * S, height=height or 28 * S,
                          bg=bg, highlightthickness=0, bd=0, cursor="hand2")
         self.text, self.command, self.variant, self.bgc = text, command, variant, bg
         self.hover = self.pressed = False
@@ -206,31 +210,33 @@ class PixelButton(tk.Canvas):
 
     def draw(self):
         self.delete("all")
-        w = max(self.winfo_width(), 2) if self.winfo_width() > 2 else int(self["width"])
+        w = self.winfo_width() if self.winfo_width() > 2 else int(self["width"])
         h = int(self["height"])
-        face, hi, sh, hov = BTN[self.variant]
-        if self.pressed:
-            hi, sh = sh, hi
-        bevel(self, 0, 0, w, h, hov if self.hover else face, hi, sh, self.bgc)
+        face, fg, line, hov = BTN[self.variant]
         dy = S if self.pressed else 0
-        self.create_text(w / 2 + S, h / 2 + S + dy, text=self.text, font=self.font, fill="#2a2a2a")
-        self.create_text(w / 2, h / 2 + dy, text=self.text, font=self.font,
-                         fill="#ffffa0" if self.hover else "white")
+        round_rect(self, S, S + dy, w - S, h - S, h / 2, fill=hov if self.hover else face,
+                   outline=line, width=max(1, S))
+        self.create_text(w / 2, h / 2 + dy, text=self.text, font=self.font, fill=fg)
 
 
 class PixelCheck(tk.Frame):
-    """체크박스(radio_value 없음) 또는 라디오 버튼."""
+    """체크박스는 토글 스위치, radio_value 가 있으면 동그란 라디오."""
 
-    def __init__(self, parent, text, variable, command=None, radio_value=None, bg=PANEL, fg=TXT):
+    def __init__(self, parent, text, variable, command=None, radio_value=None, bg=None, fg=TXT):
+        bg = bg or parent["bg"]
         super().__init__(parent, bg=bg)
-        self.var, self.rv, self.command = variable, radio_value, command
-        n = 12 * S
-        self.box = tk.Canvas(self, width=n, height=n, bg=bg, highlightthickness=0, cursor="hand2")
-        self.box.pack(side="left")
+        self.var, self.rv, self.command, self.bgc = variable, radio_value, command, bg
+        w, h = (16 * S, 16 * S) if radio_value is not None else (34 * S, 18 * S)
+        self.box = tk.Canvas(self, width=w, height=h, bg=bg, highlightthickness=0, cursor="hand2")
         lbl = tk.Label(self, text=text, bg=bg, fg=fg, font=FONTS["r"], cursor="hand2")
-        lbl.pack(side="left", padx=(4 * S, 0))
-        for w in (self.box, lbl):
-            w.bind("<Button-1>", self.click)
+        if radio_value is not None:
+            self.box.pack(side="left")
+            lbl.pack(side="left", padx=(5 * S, 0))
+        else:
+            lbl.pack(side="left", padx=(0, 6 * S))
+            self.box.pack(side="left")
+        for x in (self.box, lbl):
+            x.bind("<Button-1>", self.click)
         variable.trace_add("write", lambda *a: self.draw())
         self.draw()
 
@@ -243,45 +249,48 @@ class PixelCheck(tk.Frame):
             self.command()
 
     def draw(self):
-        c, n = self.box, 12 * S
+        c = self.box
         c.delete("all")
-        slot(c, 0, 0, n, n)
-        if not self.checked():
-            return
+        on = self.checked()
         if self.rv is not None:
-            c.create_rectangle(4 * S, 4 * S, 8 * S, 8 * S, fill="#55ff55", outline="")
+            n = 16 * S
+            c.create_oval(S, S, n - S, n - S, outline=ACCENT if on else LINE, width=2 * S, fill=PANEL)
+            if on:
+                c.create_oval(5 * S, 5 * S, n - 5 * S, n - 5 * S, fill=ACCENT, outline="")
             return
-        for y, row in enumerate(CHECK):
-            for x, ch in enumerate(row):
-                if ch == "g":
-                    px, py = 2 * S + x * S, 2 * S + y * S
-                    c.create_rectangle(px, py, px + S, py + S, fill="#55ff55", outline="")
+        w, h = 34 * S, 18 * S
+        round_rect(c, S, S, w - S, h - S, h / 2, fill=ACCENT if on else PANEL,
+                   outline=ACCENT if on else TXT, width=max(1, S) + (0 if on else 1))
+        k = h - 8 * S
+        x = w - 4 * S - k if on else 4 * S
+        c.create_oval(x, 4 * S, x + k, 4 * S + k, fill=PANEL if on else TXT, outline="")
 
 
 class Panel(tk.Frame):
-    """인벤토리 창 느낌 패널. 내용은 .content 에."""
+    """둥근 흰 카드. 내용은 .content 에."""
 
     def __init__(self, parent, title, icon=None):
         super().__init__(parent, bg=SKY)
-        self.pad = 8 * S
+        self.pad = 14 * S
         self.cv = tk.Canvas(self, width=PANEL_W, height=40, bg=SKY, highlightthickness=0, bd=0)
         self.cv.pack()
         self.body = tk.Frame(self.cv, bg=PANEL)
         head = tk.Frame(self.body, bg=PANEL)
-        head.pack(anchor="w", pady=(0, 4 * S))
+        head.pack(anchor="w", pady=(0, 6 * S))
         if icon:
-            tk.Label(head, image=icon, bg=PANEL).pack(side="left", padx=(0, 4 * S))
-        tk.Label(head, text=title, font=FONTS["b"], fg=TXT, bg=PANEL).pack(side="left")
+            tk.Label(head, image=icon, bg=PANEL).pack(side="left", padx=(0, 6 * S))
+        tk.Label(head, text=title, font=FONTS["h"], fg=TXT, bg=PANEL).pack(side="left")
         self.content = tk.Frame(self.body, bg=PANEL)
         self.content.pack(fill="x")
-        self.cv.create_window(self.pad, self.pad, window=self.body, anchor="nw", width=PANEL_W - 2 * self.pad)
+        self.cv.create_window(self.pad, self.pad - 2 * S, window=self.body, anchor="nw",
+                              width=PANEL_W - 2 * self.pad)
         self.body.bind("<Configure>", self.redraw)
 
     def redraw(self, e=None):
-        h = self.body.winfo_reqheight() + 2 * self.pad
+        h = self.body.winfo_reqheight() + 2 * self.pad - 4 * S
         self.cv.configure(height=h)
         self.cv.delete("bev")
-        bevel(self.cv, 0, 0, PANEL_W, h, PANEL, HI, SH, SKY, tag="bev")
+        round_rect(self.cv, S, S, PANEL_W - S, h - S, 18 * S, fill=PANEL, outline=LINE, width=2 * S, tags="bev")
 
 
 def label(parent, text="", font="r", fg=TXT, **kw):
@@ -289,18 +298,18 @@ def label(parent, text="", font="r", fg=TXT, **kw):
 
 
 class PixelStepper(tk.Frame):
-    """마크 버튼 [-] 검은 입력칸 [+]"""
+    """( - )  [ 값 ]  ( + )"""
 
     def __init__(self, parent, var, lo, hi, step, width=5):
         bg = parent["bg"]
         super().__init__(parent, bg=bg)
         self.var, self.lo, self.hi, self.step = var, lo, hi, step
         self.dec = 0 if float(step).is_integer() else len(str(step).split(".")[1])
-        n = 18 * S
-        PixelButton(self, "-", lambda: self.bump(-1), width=n, height=n, bg=bg).pack(side="left")
-        tk.Entry(self, textvariable=var, width=width, font=FONTS["b"], justify="center", bg="#000000",
-                 fg="#ffffff", insertbackground="#ffffff", relief="flat", bd=0, highlightthickness=2 * S,
-                 highlightbackground="#a0a0a0", highlightcolor="#ffffff").pack(side="left", padx=2 * S, ipady=S)
+        n = 24 * S
+        PixelButton(self, "−", lambda: self.bump(-1), width=n, height=n, bg=bg).pack(side="left")
+        tk.Entry(self, textvariable=var, width=width, font=FONTS["b"], justify="center", bg=SOFT,
+                 fg=TXT, insertbackground=TXT, relief="flat", bd=0, highlightthickness=0).pack(
+            side="left", padx=4 * S, ipady=3 * S)
         PixelButton(self, "+", lambda: self.bump(1), width=n, height=n, bg=bg).pack(side="left")
 
     def bump(self, d):
@@ -338,10 +347,10 @@ class PickDialog(tk.Toplevel):
         pil = pil.resize((vw, vh), Image.NEAREST if s >= 1 else Image.LANCZOS)
         self.photo = ImageTk.PhotoImage(pil)
 
-        tk.Label(self, text=guide, font=FONTS["b"], fg="#ffff55", bg="#1a0a2a", justify="left",
-                 padx=8 * S, pady=5 * S, highlightthickness=2 * S, highlightbackground="#5a2bd6"
+        tk.Label(self, text=guide, font=FONTS["b"], fg=ACCENT, bg="#fde3e3", justify="left",
+                 padx=10 * S, pady=6 * S, highlightthickness=0
                  ).pack(anchor="w", padx=10 * S, pady=(8 * S, 6 * S))
-        self.cv = tk.Canvas(self, width=vw, height=vh, highlightthickness=2 * S, highlightbackground=SLOT_SH,
+        self.cv = tk.Canvas(self, width=vw, height=vh, highlightthickness=2 * S, highlightbackground=LINE,
                             cursor="crosshair" if mode != "view" else "arrow")
         self.cv.pack(padx=10 * S)
         self.cv.create_image(0, 0, image=self.photo, anchor="nw")
@@ -536,8 +545,8 @@ class App:
         self.capture_mode = tk.StringVar(value="live")
         PixelCheck(mf, "게임에서 F7", self.capture_mode, radio_value="live").pack(side="left", padx=(0, 8 * S))
         PixelCheck(mf, "스크린샷 파일", self.capture_mode, radio_value="file").pack(side="left")
-        self.guide = tk.Label(c, text="", font=FONTS["b"], fg="#ffff55", bg="#1a0a2a", padx=6 * S, pady=4 * S,
-                              highlightthickness=2 * S, highlightbackground="#5a2bd6",
+        self.guide = tk.Label(c, text="", font=FONTS["b"], fg=ACCENT, bg="#fde3e3", padx=8 * S, pady=6 * S,
+                              highlightthickness=0,
                               wraplength=PANEL_W - 40 * S, justify="left")
         self.guide_row = len(rows) + 2
 
@@ -780,19 +789,19 @@ class App:
         cv = self.bar_cv
         cv.delete("all")
         W, H = int(cv["width"]), int(cv["height"])
-        slot(cv, 0, 0, W, H, fill="#0b3c5d")
+        slot(cv, 0, 0, W, H, fill="#e7f3f8")
         roi = self.cfg["bar_roi"]
         if not roi:
-            cv.create_text(W // 2, H // 2, text="미니게임이 뜨면 바를 자동으로 찾아요", font=FONTS["r"], fill="#aed6f1")
+            cv.create_text(W // 2, H // 2, text="미니게임이 뜨면 바를 자동으로 찾아요", font=FONTS["r"], fill=MUTED)
             return
         if not s["active"]:
-            cv.create_text(W // 2, H // 2, text="미니게임 기다리는 중 ...", font=FONTS["r"], fill="#aed6f1")
+            cv.create_text(W // 2, H // 2, text="미니게임 기다리는 중 ...", font=FONTS["r"], fill=MUTED)
             return
         scale = (W - 8 * S) / roi[2]
         if s["zone"] is not None and self.macro:
             zw = max(self.macro.zone_w, 4) * scale
             zx = 4 * S + s["zone"] * scale
-            cv.create_rectangle(zx - zw / 2, 3 * S, zx + zw / 2, H - 3 * S, outline="#aed6f1", width=2 * S)
+            cv.create_rectangle(zx - zw / 2, 3 * S, zx + zw / 2, H - 3 * S, outline=ACCENT, width=2 * S)
         if s["fish"] is not None:
             cv.create_image(4 * S + s["fish"] * scale, H // 2, image=self.icons["fish"])
 

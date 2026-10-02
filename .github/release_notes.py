@@ -10,4 +10,4 @@ if not m:
     sys.exit(f"CHANGELOG.md 에 v{ver} 항목이 없음")
 body = f"## v{ver} 변경 사항\n{m.group(1).strip()}\n\n---\n{intro}\n\n전체 패치 내역: CHANGELOG.md\n"
 open("notes.md", "w", encoding="utf-8").write(body)
-print(body)
+sys.stdout.buffer.write(body.encode("utf-8"))

@@ -11,7 +11,6 @@ import ctypes
 import threading
 import time
 
-import cv2
 import keyboard
 import numpy as np
 import pydirectinput
@@ -49,6 +48,7 @@ class Macro:
         self.quit = False
         self.shift_down = False
         self.zone_w = 0
+        self.start_at = 0.0
         self.prev_zone = None
         keyboard.add_hotkey("f8", self.toggle)
         keyboard.add_hotkey("f9", self.request_quit)
@@ -56,7 +56,11 @@ class Macro:
     # ---------- 입력 ----------
     def toggle(self):
         self.running = not self.running
-        print("[시작]" if self.running else "[일시정지]")
+        if self.running:
+            self.start_at = time.perf_counter() + self.cfg["start_delay_sec"]
+            print(f"[시작] {self.cfg['start_delay_sec']:.0f}초 뒤 동작. 게임 창 클릭해둬")
+        else:
+            print("[일시정지]")
 
     def request_quit(self):
         self.quit = True
@@ -161,9 +165,14 @@ class Macro:
         self.log(f"기준 찌 픽셀={base_n:.0f} y={base_y:.1f}")
 
         deadline = time.perf_counter() + c["bite_timeout_sec"]
+        next_log = 0.0
         while time.perf_counter() < deadline:
             self.check()
             n, y = self.bobber()
+            if time.perf_counter() > next_log:
+                self.log(f"찌 px={n} (기준 {base_n:.0f}, 입질<{base_n * c['bite_drop_ratio']:.0f})  "
+                         f"y={'없음' if y is None else f'{y - base_y:+.1f}'} (입질>{c['bite_dip_px']})")
+                next_log = time.perf_counter() + 0.25
             if n < base_n * c["bite_drop_ratio"] or (y is not None and y - base_y > c["bite_dip_px"]):
                 self.log(f"입질! n={n} y={y}")
                 return True
@@ -242,7 +251,7 @@ class Macro:
     def run(self):
         print("F8: 시작/일시정지, F9: 종료")
         while not self.quit:
-            if not self.running:
+            if not self.running or time.perf_counter() < self.start_at:
                 time.sleep(0.05)
                 continue
             try:
@@ -253,37 +262,26 @@ class Macro:
 
 
 def preview(cfg):
-    screen = Screen(cfg["monitor"])
-    tol = cfg["tolerance"]
-    print("미리보기: q 종료")
-    while True:
-        b = screen.grab(cfg["bobber_roi"])
-        bm = color_mask(b, cfg["bobber_color"], tol)
-        bv = b.copy()
-        bv[bm] = (0, 255, 0)
-
-        g = screen.grab(cfg["bar_roi"])
-        gv = g.copy()
-        for color, t, mark in ((cfg["bar_color"], cfg["bar_tolerance"], (255, 0, 0)),
-                               (cfg["fish_color"], tol, (0, 0, 255))):
-            m = color_mask(g, color, t)
-            gv[m] = mark
-            xs = np.nonzero(m)[1]
-            if xs.size >= cfg["min_pixels"]:
-                cv2.line(gv, (int(xs.mean()), 0), (int(xs.mean()), gv.shape[0] - 1), mark, 1)
-
-        cv2.imshow("bobber (green=detected)", cv2.resize(bv, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST))
-        cv2.imshow("bar (blue=bar, red=fish)", cv2.resize(gv, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST))
-        info = f"bobber px={int(bm.sum()):5d}"
-        if cfg["gauge_roi"]:
-            gm = color_mask(screen.grab(cfg["gauge_roi"]), cfg["gauge_color"], cfg["gauge_tolerance"])
-            info += f"  gauge={gm.sum() / cfg['gauge_full_pixels']:.0%}"
-        if cfg["durability_roi"]:
-            info += f"  durability hue={durability_hue(screen.grab(cfg['durability_roi']))}"
-        print("\r" + info + "      ", end="")
-        if cv2.waitKey(30) & 0xFF == ord("q"):
-            break
-    cv2.destroyAllWindows()
+    """입력 없이 감지값만 출력. 창을 띄우지 않으니 게임 화면을 가리지 않음."""
+    m = Macro(cfg)
+    print("미리보기 (F9 또는 Ctrl+C 종료). 게임 창을 띄워두고 값 변화를 봐")
+    try:
+        while not m.quit:
+            n, y = m.bobber()
+            info = f"찌 px={n:4d} y={'-' if y is None else f'{y:5.1f}'}"
+            zone, fish = m.bar_state()
+            info += f" | 구간={'-' if zone is None else f'{zone:5.0f}'} 물고기={'-' if fish is None else f'{fish:5.0f}'}"
+            g = m.gauge_ratio()
+            if g is not None:
+                info += f" | 게이지={g:4.0%}"
+            if cfg["durability_roi"]:
+                hue = durability_hue(m.screen.grab(cfg["durability_roi"]))
+                info += f" | 내구도 hue={'-' if hue is None else f'{hue:3.0f}'}"
+            print("\r" + info + "    ", end="", flush=True)
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        pass
+    print()
 
 
 def main():

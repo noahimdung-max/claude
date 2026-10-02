@@ -24,7 +24,7 @@ except Exception:
 
 import keyboard
 
-from common import Screen, color_mask, durability_hue, load_config, save_config
+from common import Screen, bracket_mask, color_mask, durability_hue, fish_mask, load_config, save_config
 from fishing_macro import Macro
 
 HERE = Path(__file__).parent
@@ -477,7 +477,9 @@ class App:
             self.status_lbl[key] = label(c)
             self.status_lbl[key].grid(row=r, column=2, sticky="w")
             if key == "bar":
-                btn = PixelButton(c, "다시 찾기", self.reset_bar, width=82 * S)
+                btn = tk.Frame(c, bg=PANEL)
+                PixelButton(btn, "자동", self.reset_bar, width=39 * S).pack(side="left")
+                PixelButton(btn, "직접", lambda: self.begin_set("bar"), width=39 * S).pack(side="left", padx=(4 * S, 0))
             else:
                 btn = PixelButton(c, "지정하기", lambda k=key: self.begin_set(k), width=82 * S)
             btn.grid(row=r, column=3, pady=2 * S)
@@ -733,7 +735,9 @@ class App:
         if self.macro and self.macro.running:
             messagebox.showinfo("안내", "매크로를 먼저 정지해줘")
             return
-        scene = {k: sc for k, _, _, sc in self.ITEMS}[item]
+        scenes = {k: sc for k, _, _, sc in self.ITEMS}
+        scenes["bar"] = "미니게임 바가 떠 있을 때 (직접 낚시하면서)"
+        scene = scenes[item]
         if self.capture_mode.get() == "file":
             path = filedialog.askopenfilename(title=f"{scene} 스크린샷",
                                               filetypes=[("이미지", "*.png *.jpg *.jpeg *.bmp *.webp")])
@@ -785,6 +789,25 @@ class App:
             else:
                 self.log(f"내구도 설정 완료! 현재 색 {hue:.0f}°", "good")
 
+        elif item == "bar":
+            roi = ask_roi(self.root, img, "미니게임 바 - 하트/게이지 빼고 바 줄만")
+            if not roi:
+                return
+            x, y, w, h = roi
+            crop = img[y:y + h, x:x + w]
+            f, b = fish_mask(crop, c), bracket_mask(crop, c)
+            view = crop.copy()
+            view[f] = (0, 0, 255)
+            view[b] = (0, 255, 0)
+            ok = ask(self.root, view, f"빨강 = 물고기 ({int(f.sum())}px), 초록 = 괄호 ({int(b.sum())}px)\n"
+                                      "둘 다 보이면 확인", mode="view", max_size=(1000, 300))
+            if not ok:
+                return
+            c["bar_roi"] = roi
+            if self.macro:
+                self.macro.zone_w, self.macro.prev_zone = 0, None
+            self.log("미니게임 바 직접 지정 완료!", "good")
+
         elif item == "gauge":
             roi = ask_roi(self.root, img, "원형 게이지 - 가득 찬 상태")
             if not roi:
@@ -806,7 +829,7 @@ class App:
             self.macro.zone_w, self.macro.prev_zone = 0, None
         save_config(self.cfg)
         self.refresh_status()
-        self.log("바 위치 초기화. 다음 미니게임 때 다시 찾음", "warn")
+        self.log("바 자동 찾기 켜짐. 미니게임이 뜨면 찾아 (매크로 꺼둔 채 직접 낚시해도 찾음)", "warn")
 
     def save_adv(self):
         try:

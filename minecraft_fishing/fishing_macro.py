@@ -15,7 +15,10 @@ import traceback
 import numpy as np
 import pydirectinput
 
-from common import Screen, color_mask, durability_hue, load_config, locate_bar, save_config
+from pathlib import Path
+
+from common import (Screen, bracket_mask, color_mask, durability_hue, fish_mask, load_config, locate_bar,
+                    save_config)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -110,8 +113,7 @@ class Macro:
         self.stats["bobber_n"], self.stats["bobber_y"] = n, y
         return n, y
 
-    def find_x(self, img, color):
-        m = color_mask(img, color, self.cfg["tolerance"])
+    def find_x(self, m):
         xs = np.nonzero(m)[1]
         if xs.size < self.cfg["min_pixels"]:
             return None
@@ -123,17 +125,28 @@ class Macro:
         w, h = self.screen.mon["width"], self.screen.mon["height"]
         return [int(w * 0.2), int(h * 0.6), int(w * 0.6), int(h * 0.4)]
 
-    def find_bar(self):
-        """바 자동 탐색. 찾으면 config.json에 저장."""
+    def find_bar(self, save_debug=False):
+        """바 자동 탐색. 찾으면 config.json에 저장. 못 찾으면 save_debug 시 탐색 화면을 저장."""
         sx, sy, _, _ = roi = self.search_roi()
-        found = locate_bar(self.screen.grab(roi), self.cfg)
+        img = self.screen.grab(roi)
+        found = locate_bar(img, self.cfg)
         if found is None:
+            if save_debug:
+                self.save_debug(img)
             return False
         x, y, w, h = found
         self.cfg["bar_roi"] = [sx + x, sy + y, w, h]
         save_config(self.cfg)
         self.out(f"[바 위치 자동 감지] {self.cfg['bar_roi']} 저장됨")
         return True
+
+    def save_debug(self, img):
+        from PIL import Image
+        path = Path(__file__).with_name("debug_bar.png")
+        Image.fromarray(np.ascontiguousarray(img[:, :, ::-1])).save(path)
+        f, b = fish_mask(img, self.cfg), bracket_mask(img, self.cfg)
+        self.out(f"[바 못 찾음] 물고기색 {int(f.sum())}px, 괄호색 {int(b.sum())}px 감지. "
+                 f"탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
 
     def bar_state(self):
         """(잡는 구간 중심 x, 물고기 x). 못 찾으면 None."""
@@ -146,9 +159,9 @@ class Macro:
         if not c["bar_roi"] and not self.find_bar():
             return None, None
         img = self.screen.grab(c["bar_roi"])
-        fish_x = self.find_x(img, c["fish_color"])
+        fish_x = self.find_x(fish_mask(img, c))
 
-        cols = np.nonzero(color_mask(img, c["bar_color"], c["bar_tolerance"]).any(axis=0))[0]
+        cols = np.nonzero(bracket_mask(img, c).any(axis=0))[0]
         if cols.size == 0:
             return None, fish_x
         left, right = int(cols.min()), int(cols.max())
@@ -242,7 +255,10 @@ class Macro:
             if fish_x is not None and bar_x is not None:
                 break
             if time.perf_counter() > deadline:
-                self.out("미니게임 안 뜸")
+                if not c["bar_roi"]:
+                    self.find_bar(save_debug=True)
+                else:
+                    self.out("미니게임 안 뜸 (바 위치가 틀렸으면 '자동'으로 다시 찾기)")
                 return
             time.sleep(0.01)
         self.state = "미니게임 중"

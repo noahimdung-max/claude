@@ -28,7 +28,7 @@ DEFAULTS = {
     "bite_timeout_sec": 45.0,    # 입질 안 오면 다시 던짐
     "bite_drop_ratio": 0.5,      # 찌 픽셀 수가 기준치의 이 비율 아래로 떨어지면 입질
     "bite_dip_px": 3,            # 찌 중심 y가 이만큼 내려가면 입질
-    "minigame_start_timeout_sec": 2.5,
+    "minigame_start_timeout_sec": 4.0,
     "minigame_end_missing_sec": 0.6,
     "deadzone_px": 3,            # 바-물고기 오차 허용 범위
     "lead_sec": 0.05,            # 바 속도 기반 예측 시간
@@ -87,6 +87,22 @@ class Screen:
         return np.ascontiguousarray(np.array(self.sct.grab(box))[:, :, :3])
 
 
+def fish_mask(img, cfg):
+    """물고기(밝은 연두). 지정 색 근처 + 색 규칙 둘 다 허용 (화면마다 색이 조금 달라도 잡히게)."""
+    f = img.astype(np.int16)
+    b, g, r = f[..., 0], f[..., 1], f[..., 2]
+    rule = (g > 150) & (g > r + 60) & (g > b + 50)
+    return rule | color_mask(img, cfg["fish_color"], cfg["tolerance"])
+
+
+def bracket_mask(img, cfg):
+    """잡는 구간 괄호 ( ) 하늘색."""
+    f = img.astype(np.int16)
+    b, g, r = f[..., 0], f[..., 1], f[..., 2]
+    rule = (b > 170) & (g > 140) & (r > 80) & (b > r + 40) & (b - g >= 10) & (b - g <= 80)
+    return rule | color_mask(img, cfg["bar_color"], cfg["bar_tolerance"])
+
+
 def _longest_run(idx, max_gap):
     if idx.size == 0:
         return None
@@ -98,8 +114,8 @@ def _longest_run(idx, max_gap):
 def locate_bar(img, cfg):
     """화면에서 미니게임 바 위치 자동 탐색. 물고기와 괄호가 같은 줄에 있는 곳을 찾음.
     반환: img 기준 [x, y, w, h] 또는 None."""
-    fish = color_mask(img, cfg["fish_color"], cfg["tolerance"])
-    br = color_mask(img, cfg["bar_color"], cfg["bar_tolerance"])
+    fish = fish_mask(img, cfg)
+    br = bracket_mask(img, cfg)
     rows = np.nonzero((fish.sum(axis=1) >= 2) & (br.sum(axis=1) >= 1))[0]
     yr = _longest_run(rows, 1)
     if yr is None:
@@ -108,10 +124,32 @@ def locate_bar(img, cfg):
     band = img[y0:y1 + 1].astype(np.int16)
     b, r = band[..., 0], band[..., 2]
     track = ((b > r + 40) & (b > 40)) | fish[y0:y1 + 1] | br[y0:y1 + 1]
-    xr = _longest_run(np.nonzero(track.mean(axis=0) >= 0.5)[0], 3)
-    if xr is None or xr[1] - xr[0] < 10 * (y1 - y0 + 1):
+    good = track.mean(axis=0) >= 0.5
+
+    # 마크 HUD는 화면 가운데 정렬 -> 가운데에서 양쪽으로 바 끝까지 넓혀감
+    w = img.shape[1]
+    cx = w // 2
+    gap = max(3, 2 * (y1 - y0 + 1))
+
+    def reach(step):
+        last, miss, x = None, 0, cx
+        while 0 <= x < w:
+            if good[x]:
+                last, miss = x, 0
+            else:
+                miss += 1
+                if miss > gap:
+                    break
+            x += step
+        return last
+
+    left, right = reach(-1), reach(1)
+    if left is None or right is None:
         return None
-    x0, x1 = xr
+    half = max(cx - left, right - cx)
+    if 2 * half < 10 * (y1 - y0 + 1):
+        return None
+    x0, x1 = max(0, cx - half), min(w - 1, cx + half)
     pad = 3
     h, w = img.shape[:2]
     x0, y0 = max(0, x0 - pad), max(0, y0 - pad)

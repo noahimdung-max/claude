@@ -1,4 +1,4 @@
-"""마인크래프트 낚시 매크로.
+"""마인크래프트 낚시 매크로 (콘솔 버전). UI 버전은 app.py.
 
 F8: 시작/일시정지   F9: 종료
 낚싯대 내구도 바가 빨간색이 되면 자동 정지 + 알림.
@@ -10,8 +10,8 @@ import argparse
 import ctypes
 import threading
 import time
+import traceback
 
-import keyboard
 import numpy as np
 import pydirectinput
 
@@ -22,7 +22,6 @@ pydirectinput.FAILSAFE = False
 
 
 def alert(msg):
-    print(f"\n[알림] {msg}")
     try:
         import winsound
         for _ in range(3):
@@ -40,9 +39,10 @@ class Stop(Exception):
 
 
 class Macro:
-    def __init__(self, cfg, debug=False):
+    def __init__(self, cfg, debug=False, out=print, hotkeys=True):
         self.cfg = cfg
         self.debug = debug
+        self.out = out
         self.screen = Screen(cfg["monitor"])
         self.running = False
         self.quit = False
@@ -50,24 +50,32 @@ class Macro:
         self.zone_w = 0
         self.start_at = 0.0
         self.prev_zone = None
-        keyboard.add_hotkey("f8", self.toggle)
-        keyboard.add_hotkey("f9", self.request_quit)
+        self.state = "대기"
+        self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None,
+                      "gauge": None, "hue": None, "caught": 0}
+        if hotkeys:
+            import keyboard
+            keyboard.add_hotkey("f8", self.toggle)
+            keyboard.add_hotkey("f9", self.request_quit)
 
     # ---------- 입력 ----------
     def toggle(self):
+        if not self.running and not self.cfg["bobber_roi"]:
+            self.out("찌 위치를 먼저 지정해야 함")
+            return
         self.running = not self.running
         if self.running:
             self.start_at = time.perf_counter() + self.cfg["start_delay_sec"]
-            print(f"[시작] {self.cfg['start_delay_sec']:.0f}초 뒤 동작. 게임 창 클릭해둬")
+            self.out(f"[시작] {self.cfg['start_delay_sec']:.0f}초 뒤 동작. 게임 창 클릭해둬")
         else:
-            print("[일시정지]")
+            self.out("[정지]")
 
     def request_quit(self):
         self.quit = True
 
     def log(self, *a):
         if self.debug:
-            print(f"{time.perf_counter():.2f}", *a)
+            self.out(" ".join(str(x) for x in a))
 
     def right_click(self):
         pydirectinput.mouseDown(button="right")
@@ -92,12 +100,15 @@ class Macro:
 
     # ---------- 검출 ----------
     def bobber(self):
-        img = self.screen.grab(self.cfg["bobber_roi"])
-        m = color_mask(img, self.cfg["bobber_color"], self.cfg["tolerance"])
+        c = self.cfg
+        if not c["bobber_roi"]:
+            return 0, None
+        img = self.screen.grab(c["bobber_roi"])
+        m = color_mask(img, c["bobber_color"], c["tolerance"])
         n = int(m.sum())
-        if n < self.cfg["min_pixels"]:
-            return n, None
-        return n, float(np.nonzero(m)[0].mean())
+        y = float(np.nonzero(m)[0].mean()) if n >= c["min_pixels"] else None
+        self.stats["bobber_n"], self.stats["bobber_y"] = n, y
+        return n, y
 
     def find_x(self, img, color):
         m = color_mask(img, color, self.cfg["tolerance"])
@@ -121,11 +132,16 @@ class Macro:
         x, y, w, h = found
         self.cfg["bar_roi"] = [sx + x, sy + y, w, h]
         save_config(self.cfg)
-        print(f"\n[바 위치 자동 감지] {self.cfg['bar_roi']} -> config.json 저장")
+        self.out(f"[바 위치 자동 감지] {self.cfg['bar_roi']} 저장됨")
         return True
 
     def bar_state(self):
         """(잡는 구간 중심 x, 물고기 x). 못 찾으면 None."""
+        zone, fish = self._bar_state()
+        self.stats["zone"], self.stats["fish"] = zone, fish
+        return zone, fish
+
+    def _bar_state(self):
         c = self.cfg
         if not c["bar_roi"] and not self.find_bar():
             return None, None
@@ -151,23 +167,38 @@ class Macro:
 
     def gauge_ratio(self):
         c = self.cfg
-        if not c["gauge_roi"]:
-            return None
-        img = self.screen.grab(c["gauge_roi"])
-        return color_mask(img, c["gauge_color"], c["gauge_tolerance"]).sum() / c["gauge_full_pixels"]
+        g = None
+        if c["gauge_roi"]:
+            img = self.screen.grab(c["gauge_roi"])
+            g = color_mask(img, c["gauge_color"], c["gauge_tolerance"]).sum() / c["gauge_full_pixels"]
+        self.stats["gauge"] = g
+        return g
+
+    def durability_hue(self):
+        c = self.cfg
+        hue = durability_hue(self.screen.grab(c["durability_roi"])) if c["durability_roi"] else None
+        self.stats["hue"] = hue
+        return hue
 
     def durability_ok(self):
-        c = self.cfg
-        if not c["durability_roi"]:
+        if not self.cfg["durability_roi"]:
             return True
-        hue = durability_hue(self.screen.grab(c["durability_roi"]))
+        hue = self.durability_hue()
         self.log(f"내구도 hue={hue}")
         # hue 0 근처 = 빨강. 330 이상도 빨강 계열
-        return hue is None or c["durability_red_hue"] < hue < 330
+        return hue is None or self.cfg["durability_red_hue"] < hue < 330
+
+    def sample(self):
+        """대기 중 상태 표시용."""
+        self.bobber()
+        self.bar_state()
+        self.gauge_ratio()
+        self.durability_hue()
 
     # ---------- 단계 ----------
     def wait_bite(self):
         c = self.cfg
+        self.state = "찌 자리잡는 중"
         self.sleep(c["cast_settle_sec"])
         counts, ys = [], []
         t_end = time.perf_counter() + 0.5
@@ -179,11 +210,12 @@ class Macro:
                 ys.append(y)
             time.sleep(0.02)
         if len(counts) < 5:
-            self.log("찌 못 찾음")
+            self.out("찌를 못 찾음 -> 다시 던짐 (찌 영역/색 확인)")
             return False
         base_n, base_y = float(np.median(counts)), float(np.median(ys))
         self.log(f"기준 찌 픽셀={base_n:.0f} y={base_y:.1f}")
 
+        self.state = "입질 기다리는 중"
         deadline = time.perf_counter() + c["bite_timeout_sec"]
         next_log = 0.0
         while time.perf_counter() < deadline:
@@ -194,14 +226,15 @@ class Macro:
                          f"y={'없음' if y is None else f'{y - base_y:+.1f}'} (입질>{c['bite_dip_px']})")
                 next_log = time.perf_counter() + 0.25
             if n < base_n * c["bite_drop_ratio"] or (y is not None and y - base_y > c["bite_dip_px"]):
-                self.log(f"입질! n={n} y={y}")
+                self.out(f"입질! (찌 px {base_n:.0f}->{n})")
                 return True
             time.sleep(0.01)
-        self.log("입질 시간초과")
+        self.out("입질 시간초과 -> 다시 던짐")
         return False
 
     def minigame(self):
         c = self.cfg
+        self.state = "미니게임 기다리는 중"
         deadline = time.perf_counter() + c["minigame_start_timeout_sec"]
         while True:
             self.check()
@@ -209,10 +242,10 @@ class Macro:
             if fish_x is not None and bar_x is not None:
                 break
             if time.perf_counter() > deadline:
-                self.log("미니게임 안 뜸")
+                self.out("미니게임 안 뜸")
                 return
             time.sleep(0.01)
-        self.log("미니게임 시작")
+        self.state = "미니게임 중"
 
         last_seen = time.perf_counter()
         prev_bar, prev_t, vel = bar_x, time.perf_counter(), 0.0
@@ -250,7 +283,8 @@ class Macro:
                 time.sleep(0.005)
         finally:
             self.set_shift(False)
-        self.log("미니게임 종료")
+        self.stats["caught"] += 1
+        self.out(f"미니게임 끝 (총 {self.stats['caught']}회)")
 
         if c["reel_click_after_game"]:
             self.right_click()
@@ -258,25 +292,37 @@ class Macro:
     def cycle(self):
         if not self.durability_ok():
             self.running = False
+            self.out("[알림] 낚싯대 내구도가 빨간색 -> 정지")
             alert("낚싯대 내구도가 빨간색. 매크로 정지함.")
             raise Stop
+        self.state = "던지는 중"
         self.right_click()               # 던지기
         if self.wait_bite():
             self.right_click()           # 낚기
             self.minigame()
         else:
             self.right_click()           # 회수
+        self.state = "다시 던지기 대기"
         self.sleep(self.cfg["recast_delay_sec"])
 
     def run(self):
-        print("F8: 시작/일시정지, F9: 종료")
         while not self.quit:
             if not self.running or time.perf_counter() < self.start_at:
-                time.sleep(0.05)
+                self.state = "시작 대기" if self.running else "정지됨"
+                try:
+                    self.sample()
+                except Exception:
+                    pass
+                time.sleep(0.1)
                 continue
             try:
                 self.cycle()
             except Stop:
+                pass
+            except Exception:
+                self.running = False
+                self.out("오류로 정지:\n" + traceback.format_exc())
+            finally:
                 self.set_shift(False)
         self.set_shift(False)
 
@@ -285,20 +331,14 @@ def preview(cfg):
     """입력 없이 감지값만 출력. 창을 띄우지 않으니 게임 화면을 가리지 않음."""
     m = Macro(cfg)
     print("미리보기 (F9 또는 Ctrl+C 종료). 게임 창을 띄워두고 값 변화를 봐")
+    fmt = lambda v, f: "-" if v is None else format(v, f)
     try:
         while not m.quit:
-            n, y = m.bobber()
-            info = f"찌 px={n:4d} y={'-' if y is None else f'{y:5.1f}'}"
-            zone, fish = m.bar_state()
-            if not cfg["bar_roi"]:
-                info += " | 바: 미니게임 뜨면 자동 감지"
-            info += f" | 구간={'-' if zone is None else f'{zone:5.0f}'} 물고기={'-' if fish is None else f'{fish:5.0f}'}"
-            g = m.gauge_ratio()
-            if g is not None:
-                info += f" | 게이지={g:4.0%}"
-            if cfg["durability_roi"]:
-                hue = durability_hue(m.screen.grab(cfg["durability_roi"]))
-                info += f" | 내구도 hue={'-' if hue is None else f'{hue:3.0f}'}"
+            m.sample()
+            s = m.stats
+            info = (f"찌 px={s['bobber_n']} y={fmt(s['bobber_y'], '.1f')} | "
+                    f"구간={fmt(s['zone'], '.0f')} 물고기={fmt(s['fish'], '.0f')} | "
+                    f"게이지={fmt(s['gauge'], '.0%')} | 내구도 hue={fmt(s['hue'], '.0f')}")
             print("\r" + info + "    ", end="", flush=True)
             time.sleep(0.05)
     except KeyboardInterrupt:
@@ -313,16 +353,13 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
-    missing = [k for k in ("bobber_roi", "bobber_color") if not cfg[k]]
-    for k in ("gauge_roi", "durability_roi"):
-        if not cfg[k]:
-            print(f"경고: {k} 미설정 -> 해당 기능 꺼짐")
-    if missing:
-        raise SystemExit(f"캘리브레이션 필요: {missing} -> python calibrate.py 먼저 실행")
+    if not cfg["bobber_roi"]:
+        raise SystemExit("찌 캘리브레이션 필요 -> python calibrate.py 또는 app.py")
 
     if args.preview:
         preview(cfg)
     else:
+        print("F8: 시작/일시정지, F9: 종료")
         Macro(cfg, args.debug).run()
 
 

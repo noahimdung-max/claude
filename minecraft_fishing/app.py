@@ -571,9 +571,10 @@ class App:
         side.pack(side="left", fill="y")
         area = tk.Frame(main, bg=SKY)
         area.pack(side="left", fill="both", expand=True, padx=m, pady=(m, m))
-        self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "setup", "adv")}
+        self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "setup", "adv", "guide")}
         self.nav = {}
-        for k, ic, text in (("fish", "rod", "낚시"), ("setup", "bobber", "설정"), ("adv", "emerald", "세부")):
+        for k, ic, text in (("fish", "rod", "낚시"), ("setup", "bobber", "설정"), ("adv", "emerald", "세부"),
+                             ("guide", "chat", "가이드")):
             self.nav[k] = NavItem(side, self.icons[ic], text, lambda k=k: self.show_page(k))
             self.nav[k].pack(padx=6 * S, pady=(8 * S if k == "fish" else 2 * S, 0))
         bottom = tk.Frame(side, bg=SIDEBAR)
@@ -630,7 +631,14 @@ class App:
         self.run_btn.pack(pady=(0, 4 * S))
         self.state_lbl = label(p2.content, "정지됨", "b")
         self.state_lbl.pack()
-        label(p2.content, "시작 누르고 바로 게임 창 클릭! 게임 중엔 F8", fg=MUTED).pack()
+        label(p2.content, "시작하면 마크 창으로 자동 전환돼. 게임 중엔 F8", fg=MUTED).pack()
+        bgf = tk.Frame(p2.content, bg=PANEL)
+        bgf.pack(fill="x", pady=(8 * S, 0))
+        tk.Label(bgf, image=self.icons["heart"], bg=PANEL).pack(side="left", padx=(0, 6 * S))
+        label(bgf, "다른 창 쓰면서 낚시", "b").pack(side="left")
+        label(bgf, "(실험 · 가이드 참고)", fg=MUTED).pack(side="left", padx=(4 * S, 0))
+        self.bg_var = tk.BooleanVar(value=self.cfg["background"])
+        PixelCheck(bgf, "", self.bg_var, self.save_background).pack(side="right")
         df = tk.Frame(p2.content, bg=PANEL)
         df.pack(fill="x", pady=(8 * S, 0))
         tk.Label(df, image=self.icons["rod"], bg=PANEL).grid(row=0, column=0, rowspan=2, padx=(0, 6 * S))
@@ -683,6 +691,8 @@ class App:
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
             row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
 
+        self.build_guide()
+
         self.note_panel = Panel(self.pages["fish"], "알림", self.icons["chat"])
         self.note_panel.pack(pady=(8 * S, 0))
         self.note_lbls = []
@@ -690,6 +700,42 @@ class App:
             lb = label(self.note_panel.content, "", anchor="w", justify="left", wraplength=PANEL_W - 30 * S)
             lb.pack(fill="x", anchor="w")
             self.note_lbls.append(lb)
+
+    GUIDE = [
+        ("처음 한 번만", [
+            "마크 설정 → 접근성 → 자막 표시 켜기",
+            "접근성 → 텍스트 배경 불투명도 올리기 (자막이 잘 보여야 함)",
+            "왼쪽 '설정' → 입질 자막 → 지정하기 → 직접 낚시하다 자막 뜨면 F7",
+            "미니게임 바, 낚싯대 내구도는 자동으로 찾음 (안 되면 '직접')",
+        ]),
+        ("잘 낚이게 하는 마크 설정", [
+            "파티클: 최소  (물보라·거품이 찌/화면 판정을 방해함)",
+            "GUI 크기는 지정할 때와 같게 유지 (바꾸면 바 '자동' 다시)",
+            "밤·물속처럼 어두우면 찌 화면 모드는 어려움 → 자막 모드 사용",
+            "낚싯대는 핫바에서 선택한 상태로, 물을 바라보고 시작",
+        ]),
+        ("다른 창 쓰면서 낚시 (실험)", [
+            "마크에서 F3+P 한 번 → '포커스를 잃으면 일시정지' 꺼짐",
+            "마크 창은 최소화하지 말고 다른 창 뒤에 두기만",
+            "마크 창 크기·위치는 지정할 때와 같게",
+            "안 되면 '이 PC에선 캡처할 수 없어' 알림 → 이 기능 끄고 사용",
+        ]),
+        ("멈추는 경우", [
+            "내구도가 정한 % 이하 (수선 낚싯대는 '안 봄')",
+            "연속으로 못 낚으면 (기본 5번) 알림 띄우고 멈춤",
+            "일반 모드에서 마크 창이 뒤로 가면 잠깐 멈췄다가 돌아오면 계속",
+        ]),
+    ]
+
+    def build_guide(self):
+        for i, (title, lines) in enumerate(self.GUIDE):
+            p = Panel(self.pages["guide"], title, self.icons[("chat", "emerald", "heart", "rod")[i]])
+            p.pack(pady=(0 if i == 0 else 8 * S, 0))
+            for ln in lines:
+                row = tk.Frame(p.content, bg=PANEL)
+                row.pack(fill="x", anchor="w")
+                label(row, "•", "b", fg=ACCENT).pack(side="left", anchor="n", padx=(0, 6 * S))
+                label(row, ln, anchor="w", justify="left", wraplength=PANEL_W - 60 * S).pack(side="left", fill="x")
 
     def show_page(self, key):
         self.page = key
@@ -902,8 +948,11 @@ class App:
         done = {"subtitle": c["subtitle_roi"] and SUBTITLE_PATH.exists(), "bobber": c["bobber_roi"],
                 "rod": c["durability_roi"], "gauge": c["gauge_roi"]}
         need = {"subtitle": "필수" if sub_mode else "안 씀", "bobber": "안 씀" if sub_mode else "필수",
-                "rod": "추천", "gauge": "선택"}
+                "rod": "자동", "gauge": "선택"}
         for k, ok in done.items():
+            if not ok and k == "rod":
+                self.status_lbl[k].config(text="● 자동 (선택한 칸)", fg=OK)
+                continue
             self.status_lbl[k].config(text="● 완료" if ok else f"○ 미설정 ({need[k]})",
                                       fg=OK if ok else (BAD if need[k] == "필수" else MUTED))
         self.status_lbl["bar"].config(text="● 찾음" if c["bar_roi"] else "○ 자동으로 찾음",
@@ -1024,6 +1073,14 @@ class App:
 
         save_config(c)
         self.refresh_status()
+
+    def save_background(self):
+        self.cfg["background"] = self.bg_var.get()
+        save_config(self.cfg)
+        if self.cfg["background"]:
+            self.log("백그라운드 모드 켬: 마크에서 F3+P 꼭 누르고, 창 최소화는 하지 마", "warn")
+        else:
+            self.log("백그라운드 모드 끔")
 
     def save_durability(self):
         self.cfg["durability_ignore"] = self.ignore_var.get()

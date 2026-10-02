@@ -33,6 +33,8 @@ DEFAULTS = {
     "durability_max": 64,        # 낚싯대 최대 내구도
     "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
     "durability_ignore": False,  # True 면 내구도 안 봄 (수선 낚싯대)
+    "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)
+    "max_fails": 5,              # 연속으로 이만큼 못 낚으면 멈춤
     "tolerance": 30,             # 색 허용 오차(채널별)
     "bar_tolerance": 45,         # 괄호는 픽셀마다 밝기 차이가 커서 넉넉히
     "gauge_tolerance": 20,
@@ -47,7 +49,7 @@ DEFAULTS = {
     "lead_sec": 0.05,            # 바 속도 기반 예측 시간
     "reel_click_after_game": False,  # 미니게임 끝나고 우클릭 한 번 더 필요하면 true
     "recast_delay_sec": 1.0,
-    "start_delay_sec": 3.0,      # F8 누른 뒤 게임 창 클릭할 시간
+    "start_delay_sec": 1.0,      # 시작 버튼 후 대기 (마크 창은 자동으로 앞으로 옴)
 }
 
 
@@ -362,3 +364,26 @@ def match_score(img, tmpl):
         return 0.0
     res = cv2.matchTemplate(g, tmpl, cv2.TM_CCOEFF_NORMED)
     return float(np.nan_to_num(res, nan=0.0, posinf=0.0, neginf=0.0).max())
+
+
+# ---------------------------------------------------------------- 핫바
+def selected_slot(img):
+    """화면 아래쪽에서 핫바의 '선택된 칸'(밝은 네모 테두리)을 찾음. 반환 img 기준 (x, y, w, h) 또는 None."""
+    f = img.astype(np.int16)
+    mx, mn = f.max(axis=2), f.min(axis=2)
+    m = ((mn >= 190) & (mx - mn <= 45)).astype(np.uint8)
+    n, _, st, _ = cv2.connectedComponentsWithStats(m)
+    best = None
+    for i in range(1, n):
+        x, y, w, h, area = (int(v) for v in st[i])
+        if w < 16 or h < 16 or abs(w - h) > 0.25 * w or area > 0.6 * w * h:
+            continue                      # 네모 '테두리'만 (글자/꽉 찬 덩어리 제외)
+        if best is None or w * h > best[2] * best[3]:
+            best = (x, y, w, h)
+    return best
+
+
+def durability_roi_in_slot(slot):
+    """선택된 칸 안에서 내구도 줄이 그려지는 아래쪽 부분."""
+    x, y, w, h = slot
+    return [int(x + 0.08 * w), int(y + 0.70 * h), max(1, int(0.84 * w)), max(1, int(0.22 * h))]

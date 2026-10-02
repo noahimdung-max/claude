@@ -16,7 +16,9 @@ import cv2
 import numpy as np
 import pydirectinput
 
-from common import (Screen, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
+import winapi
+
+from common import (Screen, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
@@ -61,6 +63,10 @@ class Macro:
         self._ui_out = out
         self.last_view = None            # 마지막으로 캡처한 바 화면 (기록용)
         self.screen = Screen(cfg["monitor"])
+        self.hwnd = None                 # 마크 창
+        self.bg_mode = False             # 백그라운드 모드 사용 중
+        self.io_ready = False            # 시작할 때마다 창 찾기/모드 설정
+        self.fails = 0                   # 연속으로 못 낚은 횟수
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
         self.logger.write("START", f"화면 {self.screen.mon}")
         self.logger.config(cfg)
@@ -98,8 +104,10 @@ class Macro:
             return
         self.running = not self.running
         if self.running:
+            self.io_ready = False
+            self.fails = 0
             self.start_at = time.perf_counter() + self.cfg["start_delay_sec"]
-            self.out(f"[시작] {self.cfg['start_delay_sec']:.0f}초 뒤 동작. 게임 창 클릭해둬")
+            self.out("[시작] " + ("백그라운드 모드로 시작" if self.cfg["background"] else "마크 창으로 전환해서 시작"))
         else:
             self.out("[정지]")
 
@@ -116,8 +124,39 @@ class Macro:
         if self.debug:
             self._ui_out(msg)
 
+    def setup_io(self):
+        """시작할 때: 마크 창 찾기 + (백그라운드 모드면) 창 캡처 확인 / (일반이면) 창을 앞으로."""
+        c = self.cfg
+        self.hwnd = winapi.find_minecraft()
+        self.bg_mode = False
+        if c["background"]:
+            if not self.hwnd:
+                self.running = False
+                self.out("[정지] 마크 창을 못 찾았어 (마크를 먼저 켜줘)")
+                raise Stop
+            if winapi.is_minimized(self.hwnd):
+                self.running = False
+                self.out("[정지] 백그라운드 모드는 마크 창을 최소화하면 안 돼 (다른 창 뒤에 두기만)")
+                raise Stop
+            ws = winapi.WindowScreen(self.hwnd)
+            if ws.is_black():
+                self.running = False
+                self.out("[정지] 이 PC에선 가려진 마크 화면을 캡처할 수 없어 -> 백그라운드 모드 끄고 써줘")
+                raise Stop
+            self.screen, self.bg_mode = ws, True
+            self.out("백그라운드 모드: 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)")
+        else:
+            self.screen = Screen(c["monitor"])
+            if self.hwnd and not winapi.is_foreground(self.hwnd):
+                winapi.bring_to_front(self.hwnd)
+                time.sleep(0.3)
+        self.io_ready = True
+
     def right_click(self):
         self.logger.write("KEY", "우클릭")
+        if self.bg_mode:
+            winapi.post_right_click(self.hwnd)
+            return
         pydirectinput.mouseDown(button="right")
         time.sleep(0.05)
         pydirectinput.mouseUp(button="right")
@@ -125,17 +164,25 @@ class Macro:
     def set_shift(self, down):
         if down == self.shift_down:
             return
-        try:
+        if self.bg_mode:
+            winapi.post_shift(self.hwnd, down)
+        else:
             (pydirectinput.keyDown if down else pydirectinput.keyUp)("shift")
-        except Exception as e:
-            self.logger.write("ERROR", f"Shift {'누름' if down else '뗌'} 실패: {e!r}")
-            raise
-        self.logger.write("KEY", f"Shift {'누름' if down else '뗌'}")
         self.shift_down = down
 
     def check(self):
         if self.quit or not self.running:
             raise Stop
+        # 일반 모드: 마크 창이 앞에 없으면 다른 창에 키가 들어가니 기다림
+        if not self.bg_mode and self.hwnd and not winapi.is_foreground(self.hwnd):
+            self.set_shift(False)
+            prev = self.state
+            self.state = "마크 창이 앞에 없어서 일시정지"
+            while not winapi.is_foreground(self.hwnd):
+                if self.quit or not self.running:
+                    raise Stop
+                time.sleep(0.1)
+            self.state = prev
 
     def sleep(self, sec):
         end = time.perf_counter() + sec
@@ -273,9 +320,20 @@ class Macro:
     def durability_reading(self):
         """(내구도 숫자, 종류) - 종류: color / low(1~2) / full. 영역 미설정이면 None."""
         c = self.cfg
-        d = durability_value(self.screen.grab(c["durability_roi"]), c["durability_max"]) if c["durability_roi"] else None
+        roi = c["durability_roi"] or self.auto_durability_roi()
+        d = durability_value(self.screen.grab(roi), c["durability_max"]) if roi else None
         self.stats["dura"] = d
         return d
+
+    def auto_durability_roi(self):
+        """핫바에서 선택된 칸(밝은 테두리)을 찾아 그 아래 내구도 줄 영역."""
+        w, h = self.screen.mon["width"], self.screen.mon["height"]
+        sx, sy = int(w * 0.2), int(h * 0.7)
+        slot = selected_slot(self.screen.grab([sx, sy, int(w * 0.6), h - sy]))
+        if not slot:
+            return None
+        x, y, sw, sh = slot
+        return durability_roi_in_slot((sx + x, sy + y, sw, sh))
 
     def durability_limit(self):
         c = self.cfg
@@ -489,6 +547,7 @@ class Macro:
                                      f"물고기가 구간 안 {n_inside}/{n}, 구간 못찾음 {n_nozone}, 중간에 놓친 프레임 {n_inactive}, "
                                      f"Shift 전환 {n_toggle}회")
         self.out(f"미니게임 끝 (총 {self.stats['caught']}회, {dur:.1f}초)")
+        self.fails = 0
 
         if c["reel_click_after_game"]:
             self.right_click()
@@ -508,11 +567,20 @@ class Macro:
             _, m = self.bobber_search_mask()
             self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기
+        caught_before = self.stats["caught"]
         if self.wait_bite():
             self.right_click()           # 낚기
             self.minigame()
         else:
             self.right_click()           # 회수
+        if self.stats["caught"] == caught_before:
+            self.fails += 1
+            if self.fails >= self.cfg["max_fails"]:
+                self.running = False
+                msg = f"{self.fails}번 연속으로 못 낚았어 -> 정지 (물 쪽을 보고 있는지, 설정 확인)"
+                self.out("[알림] " + msg)
+                alert(msg)
+                raise Stop
         self.state = "다시 던지기 대기"
         self.sleep(self.cfg["recast_delay_sec"])
 
@@ -527,6 +595,8 @@ class Macro:
                 time.sleep(0.1)
                 continue
             try:
+                if not self.io_ready:
+                    self.setup_io()
                 self.cycle()
             except Stop:
                 pass

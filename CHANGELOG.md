@@ -1,6 +1,6 @@
 마인크래프트 Shift 미니게임 낚시 매크로 (Windows 10/11 64비트)
 
-`MinecraftFishingMacro-v버전.exe` 하나만 받아서 실행하면 돼요. 설치 필요 없음.
+아래 Assets 의 exe 하나만 받아서 실행하면 돼요. 설치 필요 없음.
 예전 버전 exe 는 지워도 돼요 (설정은 exe 옆 config.json 이라 같은 폴더에 두면 그대로 이어짐).
 설정(config.json, subtitle.png)은 exe 와 같은 폴더에 저장돼요. 사용법은 저장소 README 참고.
 

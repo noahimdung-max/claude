@@ -7,6 +7,10 @@ on:
         description: "버전 (예: 1.0.0)"
         required: true
         default: "1.0.0"
+      notes_only:
+        description: "빌드 없이 릴리즈 설명만 고치기"
+        type: boolean
+        default: false
   push:
     branches: ["claude/bold-darwin-1zygnn"]
     paths: [".github/workflows/build-exe.yml", "minecraft_fishing/ci_test_winapi.py", "minecraft_fishing/winapi.py"]
@@ -15,7 +19,21 @@ permissions:
   contents: write
 
 jobs:
+  notes:
+    if: ${{ inputs.notes_only }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/release_notes.py "${{ inputs.version }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: 마크 낚시 매크로 v${{ inputs.version }}
+          body_path: notes.md
+          make_latest: false
+
   build:
+    if: ${{ !inputs.notes_only }}
     runs-on: windows-latest
     defaults:
       run:
@@ -54,6 +72,11 @@ jobs:
           name: MinecraftFishingMacro
           path: minecraft_fishing/dist/*.exe
 
+      - name: Release notes
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: .
+        run: python .github/release_notes.py "${{ inputs.version }}"
+
       - name: Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
@@ -63,4 +86,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: minecraft_fishing/dist/*.exe
-          body_path: CHANGELOG.md
+          body_path: notes.md

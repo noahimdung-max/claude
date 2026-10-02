@@ -14,8 +14,37 @@ import numpy as np
 IS_WIN = sys.platform == "win32"
 if IS_WIN:
     from ctypes import wintypes
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+    # 64비트 윈도우에서 핸들/포인터가 잘리지 않게 인자 형식을 전부 지정
+    def _sig(dll, name, res, *args):
+        f = getattr(dll, name)
+        f.restype, f.argtypes = res, list(args)
+
+    H, HDC, HBMP, HGDI = wintypes.HWND, wintypes.HDC, wintypes.HBITMAP, wintypes.HGDIOBJ
+    _sig(user32, "IsWindowVisible", wintypes.BOOL, H)
+    _sig(user32, "GetWindowTextLengthW", ctypes.c_int, H)
+    _sig(user32, "GetWindowTextW", ctypes.c_int, H, wintypes.LPWSTR, ctypes.c_int)
+    _sig(user32, "GetClassNameW", ctypes.c_int, H, wintypes.LPWSTR, ctypes.c_int)
+    _sig(user32, "GetForegroundWindow", H)
+    _sig(user32, "IsIconic", wintypes.BOOL, H)
+    _sig(user32, "ShowWindow", wintypes.BOOL, H, ctypes.c_int)
+    _sig(user32, "SetForegroundWindow", wintypes.BOOL, H)
+    _sig(user32, "keybd_event", None, wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t)
+    _sig(user32, "GetClientRect", wintypes.BOOL, H, ctypes.POINTER(wintypes.RECT))
+    _sig(user32, "ClientToScreen", wintypes.BOOL, H, ctypes.POINTER(wintypes.POINT))
+    _sig(user32, "GetDC", HDC, H)
+    _sig(user32, "ReleaseDC", ctypes.c_int, H, HDC)
+    _sig(user32, "PrintWindow", wintypes.BOOL, H, HDC, wintypes.UINT)
+    _sig(user32, "PostMessageW", wintypes.BOOL, H, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    _sig(gdi32, "CreateCompatibleDC", HDC, HDC)
+    _sig(gdi32, "CreateCompatibleBitmap", HBMP, HDC, ctypes.c_int, ctypes.c_int)
+    _sig(gdi32, "SelectObject", HGDI, HDC, HGDI)
+    _sig(gdi32, "DeleteObject", wintypes.BOOL, HGDI)
+    _sig(gdi32, "DeleteDC", wintypes.BOOL, HDC)
+    _sig(gdi32, "GetDIBits", ctypes.c_int, HDC, HBMP, wintypes.UINT, wintypes.UINT, ctypes.c_void_p,
+         ctypes.c_void_p, wintypes.UINT)
 
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
@@ -47,6 +76,8 @@ def find_minecraft():
             found.append((cls.value.startswith("GLFW"), hwnd))
         return True
 
+    user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
+                                   wintypes.LPARAM]
     user32.EnumWindows(cb, 0)
     if not found:
         return None
@@ -55,7 +86,7 @@ def find_minecraft():
 
 
 def is_foreground(hwnd):
-    return IS_WIN and hwnd and user32.GetForegroundWindow() == hwnd
+    return bool(IS_WIN and hwnd and user32.GetForegroundWindow() == hwnd)
 
 
 def is_minimized(hwnd):
@@ -108,7 +139,7 @@ def capture_client(hwnd):
         bmi.biSize, bmi.biWidth, bmi.biHeight = ctypes.sizeof(_BMI), w, -h
         bmi.biPlanes, bmi.biBitCount = 1, 32
         buf = np.empty((h, w, 4), np.uint8)
-        gdi32.GetDIBits(hdc, bmp, 0, h, buf.ctypes.data, ctypes.byref(bmi), 0)
+        gdi32.GetDIBits(hdc, bmp, 0, h, ctypes.c_void_p(buf.ctypes.data), ctypes.byref(bmi), 0)
         return np.ascontiguousarray(buf[:, :, :3])
     finally:
         gdi32.SelectObject(hdc, old)

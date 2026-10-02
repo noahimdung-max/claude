@@ -30,6 +30,9 @@ jobs:
       - name: Install
         run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow pyinstaller
 
+      - name: Test background-mode Windows APIs
+        run: python ci_test_winapi.py
+
       - name: Build exe
         run: >
           pyinstaller --noconfirm --onefile --windowed

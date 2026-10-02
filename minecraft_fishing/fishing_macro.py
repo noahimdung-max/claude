@@ -51,6 +51,16 @@ def alert(msg):
     ).start()
 
 
+def save_error(tb):
+    """오류 내용을 프로그램 옆 error.txt 에 남김 (보내주면 원인 찾기 쉬움)."""
+    from common import DATA_DIR
+    try:
+        with open(DATA_DIR / "error.txt", "a", encoding="utf-8") as f:
+            f.write(time.strftime("[%Y-%m-%d %H:%M:%S]\n") + tb + "\n")
+    except OSError:
+        pass
+
+
 class Stop(Exception):
     pass
 
@@ -602,8 +612,10 @@ class Macro:
                 pass
             except Exception:
                 self.running = False
-                self.logger.write("ERROR", traceback.format_exc())
-                self.out("오류로 정지:\n" + traceback.format_exc())
+                tb = traceback.format_exc()
+                self.logger.write("ERROR", tb)
+                save_error(tb)
+                self.out("오류로 정지: " + tb.strip().splitlines()[-1] + "  (error.txt 에 자세히)")
             finally:
                 self.set_shift(False)
         self.set_shift(False)

@@ -100,9 +100,9 @@ def fish_mask(img, cfg):
 
 
 def track_mask(img):
-    """미니게임 바 트랙 (파랑/청록)."""
+    """미니게임 바 트랙 (파랑/청록). 트랙 색은 빨강 성분이 0 이라 게임 배경과 구분됨."""
     b, g, r = _bgr(img)
-    return (b > r + 40) & (b > 40)
+    return (r <= 25) & (b > 40) & (b > r + 40)
 
 
 def fishlike_mask(img):
@@ -161,21 +161,43 @@ def bracket_runs(bar, cfg):
     return [(a, b) for a, b in runs(cols) if b - a + 1 <= max_w]
 
 
-def fish_blob_x(bar, cfg):
-    """바 트랙 줄 안에서 가장 큰 '파랑이 아닌 선명한 덩어리'(물고기)의 가운데 x. 길쭉한 띠는 제외."""
-    m = fishlike_mask(bar)
-    rows = np.nonzero(track_mask(bar).mean(axis=1) >= 0.3)[0]
+def track_extent(bar):
+    """바 이미지에서 파란 트랙이 있는 (행 범위, 열 범위). 없으면 None.
+    바 영역이 실제 바보다 넓어도 바깥 게임 화면(배경)을 무시하기 위해 씀."""
+    t = track_mask(bar)
+    rows = np.nonzero(t.mean(axis=1) >= 0.3)[0]
     if rows.size == 0:
         return None
-    m[:max(0, rows.min() - 2)] = False          # 위의 하트, 아래 핫바 등 제외
-    m[rows.max() + 3:] = False
+    r0, r1 = int(rows.min()), int(rows.max())
+    cols = np.nonzero(t[r0:r1 + 1].mean(axis=0) >= 0.5)[0]
+    if cols.size == 0:
+        return None
+    gap = 8 * (r1 - r0 + 1)              # 물고기/괄호가 트랙을 가리는 폭까지는 이어진 걸로 봄
+    groups = runs(cols, gap)
+    c0, c1 = max(groups, key=lambda g: g[1] - g[0])
+    return (r0, r1), (c0, c1)
+
+
+def fish_blob_x(bar, cfg):
+    """트랙 위의 '파랑이 아닌 선명한 덩어리'(물고기) 가운데 x. 물고기 색은 판마다 다름.
+    트랙 가로 범위 밖(게임 배경)과, 크기/높이가 물고기답지 않은 덩어리는 제외."""
+    ext = track_extent(bar)
+    if ext is None:
+        return None
+    (r0, r1), (c0, c1) = ext
+    core_h = r1 - r0 + 1
+    m = np.zeros(bar.shape[:2], bool)
+    y0, y1 = max(0, r0 - 2), r1 + 3
+    m[y0:y1, c0:c1 + 1] = fishlike_mask(bar[y0:y1, c0:c1 + 1])
     n, _, st, cent = cv2.connectedComponentsWithStats(m.astype(np.uint8))
-    if n <= 1:
-        return None
-    i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
-    if st[i, cv2.CC_STAT_AREA] < cfg["min_pixels"] or st[i, cv2.CC_STAT_WIDTH] > 4 * bar.shape[0]:
-        return None
-    return float(cent[i][0])
+    best, best_area = None, 0
+    for i in range(1, n):
+        w, h, area = (int(v) for v in st[i, 2:5])
+        cy = cent[i][1]
+        if (area >= cfg["min_pixels"] and area > best_area and h >= 0.5 * core_h and w <= 4 * bar.shape[0]
+                and r0 - 1 <= cy <= r1 + 1):
+            best, best_area = float(cent[i][0]), area
+    return best
 
 
 def gauge_present(above, bar_h):
@@ -216,7 +238,7 @@ def locate_bar(img, cfg):
     cx = W // 2
     q = max(20, W // 10)
     track = track_mask(img)
-    good_px = track | bracket_mask(img, cfg) | fishlike_mask(img)
+    good_px = track | bracket_mask(img, cfg)     # 물고기는 gap 으로 건너뜀 (배경 색에 끌려 넓어지지 않게)
     rows = np.nonzero(track[:, cx - q:cx + q].mean(axis=1) >= 0.4)[0]
 
     for y0, y1 in sorted(runs(rows, 1), key=lambda g: g[0] - g[1]):     # 두꺼운 띠부터
@@ -224,7 +246,7 @@ def locate_bar(img, cfg):
         if bh < 2 or bh > H // 4:
             continue
         good = good_px[y0:y1 + 1].mean(axis=0) >= 0.5
-        gap = 3 * bh
+        gap = 4 * bh
 
         def reach(step):
             last, miss, x = None, 0, cx

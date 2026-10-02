@@ -10,9 +10,9 @@ faulthandler.dump_traceback_later(90, exit=True)   # 멈추면 어디서 멈췄�
 
 WIN = r'''
 import tkinter as tk
-root = tk.Tk(); root.title("Minecraft* 1.21.1 - test"); root.geometry("400x300+100+100")
+root = tk.Tk(); root.title("Minecraft* 1.21.1 - test"); root.geometry("1280x720+100+100")
 tk.Canvas(root, bg="#ff0000", highlightthickness=0).pack(fill="both", expand=True)
-cover = tk.Toplevel(root); cover.title("Other app"); cover.geometry("500x400+50+50")
+cover = tk.Toplevel(root); cover.title("Other app"); cover.geometry("1400x850+50+50")
 tk.Canvas(cover, bg="#0000ff", highlightthickness=0).pack(fill="both", expand=True)
 root.after(400, lambda: (cover.lift(), cover.focus_force()))
 root.after(60000, root.destroy)
@@ -42,9 +42,9 @@ try:
     time.sleep(1.0)
     check("not foreground (covered)", not winapi.is_foreground(hwnd))
     x, y, w, h = winapi.client_rect(hwnd)
-    check("client_rect", w > 300 and h > 200, (x, y, w, h))
+    check("client_rect", w > 1000 and h > 600, (x, y, w, h))
     img = winapi.capture_client(hwnd)
-    check("capture_client", img is not None and img.shape[0] > 200, None if img is None else img.shape)
+    check("capture_client", img is not None and img.shape[0] > 600, None if img is None else img.shape)
     if img is not None:
         b, g, r = (float(img[:, :, i].mean()) for i in range(3))
         check("captured red while covered", r > 150 and b < 100, (round(b), round(g), round(r)))
@@ -57,6 +57,34 @@ try:
     winapi.post_shift(hwnd, False)
     check("post messages", True)
     check("is_minimized false", not winapi.is_minimized(hwnd))
+    t = time.perf_counter()
+    for _ in range(20):
+        winapi.capture_client(hwnd)
+    print(f"INFO PrintWindow 1280x720: {(time.perf_counter() - t) / 20 * 1000:.1f} ms/장", flush=True)
+
+    try:
+        wgc = winapi.WGCScreen(hwnd)
+        check("WGC first frame", not wgc.is_black())
+        crop = wgc.grab([x + 10, y + 10, 20, 20])
+        check("WGC covered window red at client", crop[:, :, 2].mean() > 150 and crop[:, :, 0].mean() < 100,
+              crop.mean(axis=(0, 1)))
+        f0 = wgc.frames
+        time.sleep(2)
+        print(f"INFO WGC frames/sec (static window): {(wgc.frames - f0) / 2:.1f}", flush=True)
+        t = time.perf_counter()
+        for _ in range(200):
+            wgc.grab([x + 100, y + 100, 400, 20])
+        print(f"INFO WGC grab: {(time.perf_counter() - t) / 200 * 1000:.2f} ms/번", flush=True)
+        wgc.stop()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print("INFO WGC unavailable here:", repr(e), flush=True)
+    scr, how = winapi.open_window_screen(hwnd)
+    check("open_window_screen", not scr.is_black(), how)
+    if hasattr(scr, "stop"):
+        scr.stop()
+
     prio, throttle = winapi.keep_awake(hwnd)
     check("keep_awake priority", prio)
     check("keep_awake power throttling off", throttle)

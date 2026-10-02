@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow pyinstaller
+        run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow windows-capture pyinstaller
 
       - name: Test background-mode Windows APIs
         timeout-minutes: 3
@@ -41,6 +41,7 @@ jobs:
           --icon icon.ico
           --add-data "fonts;fonts"
           --hidden-import app
+          --hidden-import windows_capture
           MacroStart.pyw
 
       - name: Smoke test (import)

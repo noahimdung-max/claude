@@ -237,3 +237,102 @@ class WindowScreen:
 
     def full(self):
         return self.grab([0, 0, self.mon["width"], self.mon["height"]])
+
+
+def frame_origin(hwnd):
+    """WGC 가 캡처하는 창 이미지의 화면 기준 왼쪽 위 (보이지 않는 테두리 제외한 창 영역)."""
+    r = wintypes.RECT()
+    dwm = ctypes.WinDLL("dwmapi")
+    if dwm.DwmGetWindowAttribute(wintypes.HWND(hwnd), 9, ctypes.byref(r), ctypes.sizeof(r)) == 0:
+        return r.left, r.top
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.left, r.top
+
+
+class WGCScreen:
+    """Windows Graphics Capture (OBS·디스코드 화면공유 방식).
+    게임에 '다시 그려줘' 요청을 안 해서 PrintWindow 보다 게임 부담이 적고 빠름. 가려져 있어도 됨(최소화는 X)."""
+
+    def __init__(self, hwnd, first_frame_timeout=3.0):
+        import threading
+        from windows_capture import WindowsCapture
+        self.hwnd = hwnd
+        self._img, self._lock, self._stop = None, threading.Lock(), False
+        self.frames = 0
+        self.closed = False
+        kw = dict(cursor_capture=False, window_hwnd=int(hwnd), minimum_update_interval=8)
+        try:
+            cap = WindowsCapture(draw_border=False, **kw)     # 노란 테두리 끔 (윈도우 11)
+        except Exception:
+            cap = WindowsCapture(**kw)
+
+        @cap.event
+        def on_frame_arrived(frame, control):
+            if self._stop:
+                control.stop()
+                return
+            img = np.array(frame.frame_buffer[:, :, :3])       # 콜백 밖에서 쓰려면 복사 필요
+            with self._lock:
+                self._img = img
+                self.frames += 1
+
+        @cap.event
+        def on_closed():
+            self.closed = True
+
+        self.control = cap.start_free_threaded()
+        end = time.perf_counter() + first_frame_timeout
+        while self._img is None and time.perf_counter() < end:
+            time.sleep(0.02)
+        if self._img is None:
+            self.stop()
+            raise RuntimeError("WGC 첫 화면이 안 옴")
+        self._update_geom()
+
+    def _update_geom(self):
+        x, y, w, h = client_rect(self.hwnd)
+        self.mon = {"left": 0, "top": 0, "width": x + w, "height": y + h}
+        self._origin = frame_origin(self.hwnd)
+
+    def stop(self):
+        self._stop = True
+        try:
+            self.control.stop()
+        except Exception:
+            pass
+
+    def is_black(self):
+        with self._lock:
+            img = self._img
+        return img is None or float(img.mean()) < 2.0
+
+    def grab(self, roi):
+        with self._lock:
+            img = self._img
+        x, y, w, h = roi
+        out = np.zeros((h, w, 3), np.uint8)
+        if img is None:
+            return out
+        ox, oy = self._origin
+        x0, y0 = x - ox, y - oy
+        sx0, sy0 = max(0, x0), max(0, y0)
+        sx1, sy1 = min(img.shape[1], x0 + w), min(img.shape[0], y0 + h)
+        if sx1 > sx0 and sy1 > sy0:
+            out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = img[sy0:sy1, sx0:sx1]
+        return out
+
+    def full(self):
+        return self.grab([0, 0, self.mon["width"], self.mon["height"]])
+
+
+def open_window_screen(hwnd):
+    """가려진 마크 창 캡처: WGC 먼저, 안 되면 PrintWindow. 반환 (screen, 방식 이름)"""
+    try:
+        s = WGCScreen(hwnd)
+        if not s.is_black():
+            return s, "WGC"
+        s.stop()
+    except Exception:
+        pass
+    return WindowScreen(hwnd), "PrintWindow"

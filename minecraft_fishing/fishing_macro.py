@@ -78,6 +78,7 @@ class Macro:
         self.io_ready = False            # 시작할 때마다 창 찾기/모드 설정
         self.fails = 0                   # 연속으로 못 낚은 횟수
         self.shift_method = "real"
+        self.capture_name = "화면"
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
         self.logger.write("START", f"화면 {self.screen.mon}")
         self.logger.config(cfg)
@@ -135,6 +136,10 @@ class Macro:
         if self.debug:
             self._ui_out(msg)
 
+    def close_screen(self):
+        if hasattr(self.screen, "stop"):
+            self.screen.stop()
+
     def setup_io(self):
         """시작할 때: 마크 창 찾기 + (백그라운드 모드면) 창 캡처 확인 / (일반이면) 창을 앞으로."""
         c = self.cfg
@@ -149,16 +154,19 @@ class Macro:
                 self.running = False
                 self.out("[정지] 백그라운드 모드는 마크 창을 최소화하면 안 돼 (다른 창 뒤에 두기만)")
                 raise Stop
-            ws = winapi.WindowScreen(self.hwnd)
+            self.close_screen()
+            ws, how = winapi.open_window_screen(self.hwnd)
+            self.capture_name = how
             if ws.is_black():
                 self.running = False
                 self.out("[정지] 이 PC에선 가려진 마크 화면을 캡처할 수 없어 -> 백그라운드 모드 끄고 써줘")
                 raise Stop
             self.screen, self.bg_mode = ws, True
             prio, throttle = winapi.keep_awake(self.hwnd)
-            self.out("백그라운드 모드: 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)"
+            self.out(f"백그라운드 모드({how}): 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)"
                      + ("" if throttle else " / 마크 절전 제한 끄기 실패: 가이드 참고"))
         else:
+            self.close_screen()
             self.screen = Screen(c["monitor"])
             if self.hwnd and not winapi.is_foreground(self.hwnd):
                 winapi.bring_to_front(self.hwnd)

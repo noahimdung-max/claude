@@ -3,4 +3,5 @@ numpy
 opencv-python
 pydirectinput
 keyboard
+windows-capture; sys_platform == "win32"
 pillow

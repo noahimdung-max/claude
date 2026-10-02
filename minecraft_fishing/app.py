@@ -408,7 +408,7 @@ def overlay(crop, mask):
 # ---------------------------------------------------------------- 메인 앱
 class App:
     ITEMS = [
-        ("bobber", "bobber", "찌", "찌가 물 위에 떠 있을 때"),
+        ("bobber", "bobber", "찌", "물을 바라보고 찌가 떠 있을 때"),
         ("rod", "rod", "낚싯대 내구도", "핫바에 낚싯대 내구도 줄이 보일 때"),
         ("gauge", "emerald", "원형 게이지", "게이지가 '가득 찬' 순간 (스크린샷 파일 추천)"),
     ]
@@ -756,7 +756,7 @@ class App:
     def do_set(self, item, img):
         c = self.cfg
         if item == "bobber":
-            roi = ask_roi(self.root, img, "찌 영역 - 찌가 위아래로 움직이니 넉넉히", precise=False)
+            roi = ask_roi(self.root, img, "찌 영역 - 찌가 떨어질 수 있는 물 쪽을 넓게 (하트/핫바는 빼고)", precise=False)
             if not roi:
                 return
             x, y, w, h = roi

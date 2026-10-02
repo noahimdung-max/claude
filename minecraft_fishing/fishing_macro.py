@@ -12,12 +12,13 @@ import threading
 import time
 import traceback
 
+import cv2
 import numpy as np
 import pydirectinput
 
 from pathlib import Path
 
-from common import (Screen, bracket_mask, color_mask, durability_hue, fish_mask, load_config, locate_bar,
+from common import (Screen, bobber_mask, bracket_mask, color_mask, durability_hue, fish_mask, load_config, locate_bar,
                     save_config)
 
 pydirectinput.PAUSE = 0
@@ -53,6 +54,7 @@ class Macro:
         self.zone_w = 0
         self.start_at = 0.0
         self.prev_zone = None
+        self.pre_mask = None
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None,
                       "gauge": None, "hue": None, "caught": 0}
@@ -102,12 +104,13 @@ class Macro:
             time.sleep(0.01)
 
     # ---------- 검출 ----------
-    def bobber(self):
+    def bobber(self, roi=None):
+        """roi(기본: 찌 탐색 영역 전체) 안의 찌 픽셀 수와 세로 위치."""
         c = self.cfg
-        if not c["bobber_roi"]:
+        roi = roi or c["bobber_roi"]
+        if not roi:
             return 0, None
-        img = self.screen.grab(c["bobber_roi"])
-        m = color_mask(img, c["bobber_color"], c["tolerance"])
+        m = bobber_mask(self.screen.grab(roi), c)
         n = int(m.sum())
         y = float(np.nonzero(m)[0].mean()) if n >= c["min_pixels"] else None
         self.stats["bobber_n"], self.stats["bobber_y"] = n, y
@@ -140,10 +143,43 @@ class Macro:
         self.out(f"[바 위치 자동 감지] {self.cfg['bar_roi']} 저장됨")
         return True
 
-    def save_debug(self, img):
+    def bobber_search_mask(self):
+        img = self.screen.grab(self.cfg["bobber_roi"])
+        return img, bobber_mask(img, self.cfg)
+
+    def locate_bobber(self):
+        """던진 뒤 탐색 영역에서 새로 나타난 빨간 덩어리(찌)를 찾아 추적 영역 반환."""
+        c = self.cfg
+        sx, sy, sw, sh = c["bobber_roi"]
+        deadline = time.perf_counter() + 3.0
+        img = None
+        while time.perf_counter() < deadline:
+            self.check()
+            img, m = self.bobber_search_mask()
+            if self.pre_mask is not None and self.pre_mask.shape == m.shape:
+                m = m & ~self.pre_mask          # 던지기 전부터 있던 빨간 물체 제외
+            n, _, st, _ = cv2.connectedComponentsWithStats(
+                cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8)))
+            if n > 1:
+                i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+                x, y, w, h, area = (int(v) for v in st[i])
+                if area >= c["min_pixels"]:
+                    mx, my = max(10, w), max(10, 2 * h)
+                    x0, y0 = max(0, x - mx), max(0, y - my)
+                    x1, y1 = min(sw, x + w + mx), min(sh, y + h + 2 * my)
+                    return [sx + x0, sy + y0, x1 - x0, y1 - y0]
+            time.sleep(0.05)
+        if img is not None:
+            self.save_debug(img, "debug_bobber.png", "찌 못 찾음")
+        return None
+
+    def save_debug(self, img, name="debug_bar.png", what=None):
         from PIL import Image
-        path = Path(__file__).with_name("debug_bar.png")
+        path = Path(__file__).with_name(name)
         Image.fromarray(np.ascontiguousarray(img[:, :, ::-1])).save(path)
+        if what:
+            self.out(f"[{what}] 탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
+            return
         f, b = fish_mask(img, self.cfg), bracket_mask(img, self.cfg)
         self.out(f"[바 못 찾음] 물고기색 {int(f.sum())}px, 괄호색 {int(b.sum())}px 감지. "
                  f"탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
@@ -213,17 +249,22 @@ class Macro:
         c = self.cfg
         self.state = "찌 자리잡는 중"
         self.sleep(c["cast_settle_sec"])
+        track = self.locate_bobber()
+        if track is None:
+            self.out("찌를 못 찾음 -> 다시 던짐 (물 쪽을 보고 있는지, 찌 영역이 물을 덮는지 확인)")
+            return False
+        self.log(f"찌 추적 영역 {track}")
         counts, ys = [], []
         t_end = time.perf_counter() + 0.5
         while time.perf_counter() < t_end:
             self.check()
-            n, y = self.bobber()
+            n, y = self.bobber(track)
             if y is not None:
                 counts.append(n)
                 ys.append(y)
             time.sleep(0.02)
         if len(counts) < 5:
-            self.out("찌를 못 찾음 -> 다시 던짐 (찌 영역/색 확인)")
+            self.out("찌가 계속 흔들림 -> 다시 던짐")
             return False
         base_n, base_y = float(np.median(counts)), float(np.median(ys))
         self.log(f"기준 찌 픽셀={base_n:.0f} y={base_y:.1f}")
@@ -233,7 +274,7 @@ class Macro:
         next_log = 0.0
         while time.perf_counter() < deadline:
             self.check()
-            n, y = self.bobber()
+            n, y = self.bobber(track)
             if time.perf_counter() > next_log:
                 self.log(f"찌 px={n} (기준 {base_n:.0f}, 입질<{base_n * c['bite_drop_ratio']:.0f})  "
                          f"y={'없음' if y is None else f'{y - base_y:+.1f}'} (입질>{c['bite_dip_px']})")
@@ -312,6 +353,8 @@ class Macro:
             alert("낚싯대 내구도가 빨간색. 매크로 정지함.")
             raise Stop
         self.state = "던지는 중"
+        _, m = self.bobber_search_mask()
+        self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기
         if self.wait_bite():
             self.right_click()           # 낚기

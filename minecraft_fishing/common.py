@@ -87,6 +87,14 @@ class Screen:
         return np.ascontiguousarray(np.array(self.sct.grab(box))[:, :, :3])
 
 
+def bobber_mask(img, cfg):
+    """찌 빨간 부분. 지정 색 근처 + 진한 빨강 규칙 (주황 랜턴 등은 제외)."""
+    f = img.astype(np.int16)
+    b, g, r = f[..., 0], f[..., 1], f[..., 2]
+    rule = (r > 130) & (r > g + 90) & (r > b + 90) & (g < 110)
+    return rule | color_mask(img, cfg["bobber_color"], cfg["tolerance"])
+
+
 def fish_mask(img, cfg):
     """물고기(밝은 연두). 지정 색 근처 + 색 규칙 둘 다 허용 (화면마다 색이 조금 달라도 잡히게)."""
     f = img.astype(np.int16)

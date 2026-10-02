@@ -178,9 +178,18 @@ def fish_blob_x(bar, cfg):
     return float(cent[i][0])
 
 
-def gauge_present(above, cfg):
-    """바 위 가운데에 초록 원형 게이지가 있는지. 평소 화면(경험치 숫자)엔 없음."""
-    return int(fish_mask(above, cfg).sum()) >= 10
+def gauge_present(above, bar_h):
+    """바 위 가운데에 원형 게이지가 있는지. 게이지 색은 물고기마다 다름(초록/파랑/...) -> 색이 아니라
+    '바 높이보다 큰 선명한 동그라미'로 판단. 평소 화면의 경험치 숫자는 이보다 작음."""
+    hsv = cv2.cvtColor(above, cv2.COLOR_BGR2HSV)
+    m = ((hsv[..., 1] >= 80) & (hsv[..., 2] >= 80)).astype(np.uint8)
+    m = cv2.dilate(m, np.ones((3, 3), np.uint8))
+    n, _, st, _ = cv2.connectedComponentsWithStats(m)
+    if n <= 1:
+        return False
+    i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    w, h, area = (int(v) for v in st[i, 2:5])
+    return w >= 1.5 * bar_h and h >= 1.2 * bar_h and area >= 1.5 * bar_h * bar_h
 
 
 def view_roi(bar_roi):
@@ -244,7 +253,7 @@ def locate_bar(img, cfg):
         vr, bar_row = view_roi(roi)
         vx, vy, vw, vh = vr
         bar_img, above = split_view(img[vy:vy + vh, vx:vx + vw], bar_row)
-        if bracket_runs(bar_img, cfg) and gauge_present(above, cfg):
+        if bracket_runs(bar_img, cfg) and gauge_present(above, roi[3]):
             return roi
     return None
 

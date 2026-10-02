@@ -28,6 +28,7 @@ from common import (SUBTITLE_PATH, Screen, bracket_mask, color_mask, durability_
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi)
 from fishing_macro import Macro
+from session_log import LOG_DIR, SessionLog
 
 HERE = Path(__file__).parent
 
@@ -443,6 +444,7 @@ class App:
     def __init__(self):
         global S, PANEL_W
         self.cfg = load_config()
+        self.slog = SessionLog()
         self.q = queue.Queue()
         self.waiting_item = None
         self.f7 = threading.Event()
@@ -585,11 +587,15 @@ class App:
             row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
 
         self.log_wrap = tk.Frame(self.root, bg=SLOT_SH, padx=2 * S, pady=2 * S)
-        self.log_wrap.pack(padx=m, pady=(6 * S, m), fill="x")
+        self.log_wrap.pack(padx=m, pady=(6 * S, 4 * S), fill="x")
         self.log_box = tk.Text(self.log_wrap, height=7, width=1, font=FONTS["r"], bg="#101010", fg="white",
                                relief="flat", bd=0, padx=6 * S, pady=4 * S, state="disabled", wrap="char",
                                cursor="arrow")
         self.log_box.pack(fill="x")
+        lb = tk.Frame(self.root, bg=SKY)
+        lb.pack(fill="x", padx=m, pady=(0, m))
+        PixelButton(lb, "로그 폴더 열기", self.open_logs, bg=SKY).pack(side="left")
+        PixelButton(lb, "문제 생기면: 보내기용 압축", self.pack_logs, "green", bg=SKY).pack(side="right")
         for tag, color in (("good", "#55ff55"), ("warn", "#ffff55"), ("bad", "#ff5555"), ("dim", "#aaaaaa")):
             self.log_box.tag_configure(tag, foreground=color)
 
@@ -673,10 +679,12 @@ class App:
 
     # ---------- 매크로 스레드 ----------
     def worker(self):
-        self.macro = Macro(self.cfg, out=self.q.put, hotkeys=False)
+        self.macro = Macro(self.cfg, out=self.q.put, hotkeys=False, logger=self.slog)
         self.macro.run()
 
-    def log(self, msg, tag=None):
+    def log(self, msg, tag=None, from_macro=False):
+        if not from_macro:
+            self.slog.write("UI", msg)
         if tag is None:
             tag = ("bad" if ("오류" in msg or "알림" in msg) else
                    "good" if ("입질" in msg or "끝" in msg or "완료" in msg or "감지" in msg) else
@@ -689,7 +697,7 @@ class App:
 
     def tick(self):
         while not self.q.empty():
-            self.log(self.q.get())
+            self.log(self.q.get(), from_macro=True)
 
         if self.f7.is_set():
             self.f7.clear()
@@ -871,7 +879,7 @@ class App:
             vr, row = view_roi(roi)
             vx, vy, vw, vh = vr
             _, above = split_view(img[vy:vy + vh, vx:vx + vw], row)
-            has_gauge = gauge_present(above, c)
+            has_gauge = gauge_present(above, roi[3])
             ok = ask(self.root, view, f"빨강 = 물고기 ({int(f.sum())}px), 초록 = 괄호 ({int(b.sum())}px), "
                                       f"바 위 게이지 {'있음' if has_gauge else '없음!'}\n"
                                       "물고기·괄호가 보이고 게이지가 '있음'이면 확인", mode="view", max_size=(1000, 300))
@@ -938,7 +946,21 @@ class App:
         if self.macro:
             self.macro.toggle()
 
+    def open_logs(self):
+        try:
+            import os
+            os.startfile(LOG_DIR)
+        except Exception as e:
+            messagebox.showinfo("로그 폴더", f"{LOG_DIR}\n({e})")
+
+    def pack_logs(self):
+        from common import CONFIG_PATH
+        out = self.slog.pack(extra=[CONFIG_PATH, SUBTITLE_PATH])
+        self.log(f"보내기용 압축 만듦: {out.name} (logs 폴더) -> 이 파일 보내줘", "good")
+        self.open_logs()
+
     def close(self):
+        self.slog.write("END", "앱 종료")
         if self.macro:
             self.macro.quit = True
             self.macro.running = False

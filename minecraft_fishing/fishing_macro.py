@@ -22,6 +22,8 @@ from common import (Screen, bobber_mask, bracket_mask, bracket_runs, color_mask,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
+from session_log import SessionLog
+
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
 
@@ -44,11 +46,16 @@ class Stop(Exception):
 
 
 class Macro:
-    def __init__(self, cfg, debug=False, out=print, hotkeys=True):
+    def __init__(self, cfg, debug=False, out=print, hotkeys=True, logger=None):
         self.cfg = cfg
         self.debug = debug
-        self.out = out
+        self.logger = logger or SessionLog()
+        self._ui_out = out
+        self.last_view = None            # 마지막으로 캡처한 바 화면 (기록용)
         self.screen = Screen(cfg["monitor"])
+        self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
+        self.logger.write("START", f"화면 {self.screen.mon}")
+        self.logger.config(cfg)
         self.running = False
         self.quit = False
         self.shift_down = False
@@ -77,6 +84,7 @@ class Macro:
         return None
 
     def toggle(self):
+        self.logger.write("KEY", "시작/정지 요청")
         if not self.running and self.missing_setup():
             self.out(self.missing_setup())
             return
@@ -90,11 +98,18 @@ class Macro:
     def request_quit(self):
         self.quit = True
 
+    def out(self, msg):
+        self.logger.write("INFO", msg)
+        self._ui_out(msg)
+
     def log(self, *a):
+        msg = " ".join(str(x) for x in a)
+        self.logger.write("DEBUG", msg)          # 파일엔 항상 기록
         if self.debug:
-            self.out(" ".join(str(x) for x in a))
+            self._ui_out(msg)
 
     def right_click(self):
+        self.logger.write("KEY", "우클릭")
         pydirectinput.mouseDown(button="right")
         time.sleep(0.05)
         pydirectinput.mouseUp(button="right")
@@ -102,7 +117,12 @@ class Macro:
     def set_shift(self, down):
         if down == self.shift_down:
             return
-        (pydirectinput.keyDown if down else pydirectinput.keyUp)("shift")
+        try:
+            (pydirectinput.keyDown if down else pydirectinput.keyUp)("shift")
+        except Exception as e:
+            self.logger.write("ERROR", f"Shift {'누름' if down else '뗌'} 실패: {e!r}")
+            raise
+        self.logger.write("KEY", f"Shift {'누름' if down else '뗌'}")
         self.shift_down = down
 
     def check(self):
@@ -184,6 +204,7 @@ class Macro:
         from PIL import Image
         path = Path(__file__).with_name(name)
         Image.fromarray(np.ascontiguousarray(img[:, :, ::-1])).save(path)
+        self.logger.snap(img, path.stem)
         if what:
             self.out(f"[{what}] 탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
             return
@@ -202,14 +223,15 @@ class Macro:
         if not c["bar_roi"] and not self.find_bar():
             return False, None, None
         vr, bar_row = view_roi(c["bar_roi"])
-        bar, above = split_view(self.screen.grab(vr), bar_row)
+        self.last_view = self.screen.grab(vr)
+        bar, above = split_view(self.last_view, bar_row)
         fish_x = fish_blob_x(bar, c)
-        # 미니게임 판정: 바 위 가운데 초록 게이지 + 바 안의 물고기 (평소 경험치 바/핫바 아이템과 구분)
-        active = fish_x is not None and gauge_present(above, c)
+        br = bracket_runs(bar, c)
+        # 미니게임 판정: 파란 트랙 위 물고기 + (게이지 또는 괄호). 게이지/물고기 색은 판마다 다름
+        active = fish_x is not None and (bool(br) or gauge_present(above, c["bar_roi"][3]))
         if not active:
             return False, None, None
 
-        br = bracket_runs(bar, c)
         centers = [(a + b) / 2 for a, b in br]
         zone_x = None
         if len(centers) >= 2 and centers[-1] - centers[0] > 2:
@@ -308,6 +330,7 @@ class Macro:
                 next_log = time.perf_counter() + 0.5
             hits = hits + 1 if s >= thr else 0
             if hits >= c["bite_confirm_frames"]:
+                self.bite_img = self.screen.grab(c["subtitle_roi"])
                 self.out(f"입질! (자막 일치 {s:.0%})")
                 return True
             time.sleep(0.03)
@@ -355,6 +378,7 @@ class Macro:
             bite = n < drop_thr or (dip is not None and dip > dip_thr)
             hits = hits + 1 if bite else 0
             if hits >= c["bite_confirm_frames"]:
+                self.bite_img = self.screen.grab(track)
                 self.out(f"입질! (찌 px {base_n:.0f}->{n}, 내려감 {'-' if dip is None else f'{dip:.1f}'}px)")
                 return True
             time.sleep(0.01)
@@ -374,54 +398,93 @@ class Macro:
                 if not c["bar_roi"]:
                     self.find_bar(save_debug=True)
                 else:
+                    self.logger.snap(self.last_view, "미니게임_안뜸")
+                    self.logger.snap(self.bite_img, "헛챔질_입질순간")
                     self.out("미니게임 안 뜸 (헛챔질이었거나, 바 위치가 틀렸으면 '자동'으로 다시 찾기)")
                 return
             time.sleep(0.01)
         self.state = "미니게임 중"
         self.out("미니게임 시작")
+        self.logger.snap(self.last_view, "미니게임_시작")
 
-        last_active = time.perf_counter()
-        prev_zone, prev_t, vel = zone, time.perf_counter(), 0.0
+        t0 = last_active = time.perf_counter()
+        prev_zone, prev_t, vel = zone, t0, 0.0
+        n = n_inactive = n_nozone = n_inside = n_toggle = 0
+        snapped_lost = snapped_nozone = False
+        lost_img, lost_n = None, 0
+        nozone_since = None
+        end_reason = "물고기/게이지 사라짐"
         try:
             while True:
                 self.check()
                 now = time.perf_counter()
                 active, zone, fish = self.bar_state()
+                n += 1
 
                 g = self.gauge_ratio()
                 if g is not None and g >= c["gauge_full_ratio"]:
-                    self.log("게이지 가득 -> 낚음")
+                    end_reason = "게이지 가득"
                     break
 
                 if not active:
+                    if lost_img is None:
+                        lost_img = self.last_view
+                        self.logger.write("GAME", f"t={now - t0:.2f} 미니게임 안 보임 시작")
+                    lost_n += 1
                     if now - last_active > c["minigame_end_missing_sec"]:
-                        break
+                        break           # 끝 (마지막 안 보임은 정상 종료라 집계 안 함)
                     continue
+                if lost_img is not None:  # 잠깐 놓쳤다가 다시 잡음 -> 문제 상황이라 기록
+                    n_inactive += lost_n
+                    self.logger.write("GAME", f"t={now - t0:.2f} 미니게임 다시 보임 ({now - last_active:.2f}s 놓침)")
+                    if not snapped_lost:
+                        self.logger.snap(lost_img, "미니게임_잠깐놓침")
+                        snapped_lost = True
+                    lost_img, lost_n = None, 0
                 last_active = now
 
+                raw_zone = zone
                 if zone is None:
+                    n_nozone += 1
+                    nozone_since = nozone_since or now
+                    if not snapped_nozone and now - nozone_since > 0.3:
+                        self.logger.snap(self.last_view, "구간_못찾음")
+                        snapped_nozone = True
                     if prev_zone is None:
+                        self.logger.write("GAME", f"t={now - t0:.2f} 구간(괄호) 못 찾음, 물고기={fish:.0f} -> 조작 안 함")
                         continue
                     zone = prev_zone
-                elif prev_zone is not None:
-                    dt = now - prev_t
-                    if dt > 0:
-                        vel = 0.7 * vel + 0.3 * (zone - prev_zone) / dt
-                    prev_zone, prev_t = zone, now
                 else:
+                    nozone_since = None
+                    if prev_zone is not None:
+                        dt = now - prev_t
+                        if dt > 0:
+                            vel = 0.7 * vel + 0.3 * (zone - prev_zone) / dt
                     prev_zone, prev_t = zone, now
 
                 err = fish - (zone + vel * c["lead_sec"])
+                before = self.shift_down
                 if err < -c["deadzone_px"]:
                     self.set_shift(True)    # 왼쪽으로
                 elif err > c["deadzone_px"]:
                     self.set_shift(False)   # 오른쪽으로
-                self.log(f"zone={zone:.0f} fish={fish:.0f} err={err:.0f} shift={self.shift_down} gauge={g}")
+                toggled = before != self.shift_down
+                n_toggle += toggled
+                if self.zone_w and abs(fish - zone) < self.zone_w / 2:
+                    n_inside += 1
+                if toggled or raw_zone is None or n % 10 == 0:
+                    self.logger.write("GAME", f"t={now - t0:.2f} 구간={'예전값 ' if raw_zone is None else ''}{zone:.0f} "
+                                              f"폭={self.zone_w:.0f} 물고기={fish:.0f} 오차={err:.0f} 속도={vel:.0f} "
+                                              f"shift={'O' if self.shift_down else 'X'} 게이지={g}")
                 time.sleep(0.005)
         finally:
             self.set_shift(False)
+        dur = time.perf_counter() - t0
         self.stats["caught"] += 1
-        self.out(f"미니게임 끝 (총 {self.stats['caught']}회)")
+        self.logger.write("SUMMARY", f"미니게임 {dur:.1f}초, 끝난 이유: {end_reason}, 프레임 {n}, "
+                                     f"물고기가 구간 안 {n_inside}/{n}, 구간 못찾음 {n_nozone}, 중간에 놓친 프레임 {n_inactive}, "
+                                     f"Shift 전환 {n_toggle}회")
+        self.out(f"미니게임 끝 (총 {self.stats['caught']}회, {dur:.1f}초)")
 
         if c["reel_click_after_game"]:
             self.right_click()
@@ -464,6 +527,7 @@ class Macro:
                 pass
             except Exception:
                 self.running = False
+                self.logger.write("ERROR", traceback.format_exc())
                 self.out("오류로 정지:\n" + traceback.format_exc())
             finally:
                 self.set_shift(False)

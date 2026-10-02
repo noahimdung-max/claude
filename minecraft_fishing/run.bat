@@ -1,5 +1,7 @@
 @echo off
 cd /d "%~dp0"
-python -m pip install -q -r requirements.txt
-python app.py
-if errorlevel 1 pause
+python -c "import mss, cv2, numpy, pydirectinput, keyboard, PIL" 2>/dev/null || (
+  echo Installing libraries for the first run...
+  python -m pip install -q -r requirements.txt
+)
+start "" pythonw "%~dp0MacroStart.pyw"

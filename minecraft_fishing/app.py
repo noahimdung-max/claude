@@ -34,20 +34,40 @@ from fishing_macro import Macro
 HERE = Path(__file__).parent
 
 # ---------------------------------------------------------------- 색상
-SKY = "#fff4ea"                  # 창 배경 (크림)
-PANEL = "#ffffff"                # 카드
-LINE = "#f1dccb"                 # 카드 테두리
-SOFT = "#fdebdd"                 # 입력칸/트랙 (살구)
-ACCENT = "#dc4655"               # 코랄
-TXT, MUTED = "#3a2b2b", "#a08d82"
-OK, BAD = "#2e9e6b", "#dc4655"
-SLOT = SOFT
-BTN = {  # 면, 글자, 테두리, 마우스 올렸을 때 면
-    "gray": ("#fdebdd", "#3a2b2b", "#f1dccb", "#fbdcc8"),
-    "green": ("#dc4655", "#ffffff", "#dc4655", "#e55d6a"),
-    "red": ("#3a2b2b", "#ffffff", "#3a2b2b", "#56403f"),
-    "mint": ("#d4f1ea", "#1f6f5c", "#d4f1ea", "#c3eae0"),
+THEMES = {
+    "light": dict(
+        SKY="#fff4ea", PANEL="#ffffff", LINE="#f1dccb", SOFT="#fdebdd", ACCENT="#dc4655",
+        TXT="#3a2b2b", MUTED="#a08d82", OK="#2e9e6b", BAD="#dc4655", SIDEBAR="#ffe7d6", NAV_SEL="#fbd5d2",
+        GUIDE_BG="#fde3e3", BAR_BG="#e7f3f8",
+        HEADER=["#7cc6ef", "#8ccdf1", "#9cd5f3", "#acdcf5"], CLOUD="#ffffff",
+        BTN={  # 면, 글자, 테두리, 마우스 올렸을 때 면
+            "gray": ("#fdebdd", "#3a2b2b", "#f1dccb", "#fbdcc8"),
+            "green": ("#dc4655", "#ffffff", "#dc4655", "#e55d6a"),
+            "red": ("#3a2b2b", "#ffffff", "#3a2b2b", "#56403f"),
+            "mint": ("#d4f1ea", "#1f6f5c", "#d4f1ea", "#c3eae0"),
+        }),
+    "dark": dict(
+        SKY="#1e191b", PANEL="#2a2326", LINE="#3e3236", SOFT="#3a2f32", ACCENT="#ef5d6b",
+        TXT="#f3e9e4", MUTED="#a8978f", OK="#4cc38a", BAD="#ef5d6b", SIDEBAR="#251f22", NAV_SEL="#4a2c31",
+        GUIDE_BG="#4a2c31", BAR_BG="#1f2d36",
+        HEADER=["#141c36", "#18213f", "#1d2748", "#222d52"], CLOUD="#3b4466",
+        BTN={
+            "gray": ("#3a2f32", "#f3e9e4", "#4a3d41", "#46393d"),
+            "green": ("#ef5d6b", "#ffffff", "#ef5d6b", "#f4747f"),
+            "red": ("#f3e9e4", "#1e191b", "#f3e9e4", "#ffffff"),
+            "mint": ("#1f3d36", "#7fe0c4", "#1f3d36", "#26493f"),
+        }),
 }
+
+
+def apply_theme(name):
+    globals().update(THEMES[name])
+    globals()["SLOT"] = globals()["SOFT"]
+
+
+SKY = PANEL = LINE = SOFT = ACCENT = TXT = MUTED = OK = BAD = SIDEBAR = NAV_SEL = GUIDE_BG = BAR_BG = None
+CLOUD = SLOT = HEADER = BTN = None
+apply_theme("light")
 
 # ---------------------------------------------------------------- 픽셀 아트
 SPRITES = {
@@ -126,6 +146,7 @@ CHECK = [
 ]
 
 S = 1           # UI 배율 (DPI 따라 결정)
+SIDE_W = 78
 FONTS = {}
 PANEL_W = 400
 
@@ -169,8 +190,9 @@ def round_rect(cv, x0, y0, x1, y1, r, **kw):
     return cv.create_polygon(pts, smooth=True, splinesteps=24, **kw)
 
 
-def slot(cv, x0, y0, x1, y1, fill=SOFT, tag=""):
+def slot(cv, x0, y0, x1, y1, fill=None, tag=""):
     """살구색 둥근 칸 (트랙/입력칸)."""
+    fill = fill or SOFT
     round_rect(cv, x0, y0, x1, y1, min(12 * S, (y1 - y0) / 2), fill=fill, outline="", tags=tag)
 
 
@@ -222,8 +244,8 @@ class PixelButton(tk.Canvas):
 class PixelCheck(tk.Frame):
     """체크박스는 토글 스위치, radio_value 가 있으면 동그란 라디오."""
 
-    def __init__(self, parent, text, variable, command=None, radio_value=None, bg=None, fg=TXT):
-        bg = bg or parent["bg"]
+    def __init__(self, parent, text, variable, command=None, radio_value=None, bg=None, fg=None):
+        bg, fg = bg or parent["bg"], fg or TXT
         super().__init__(parent, bg=bg)
         self.var, self.rv, self.command, self.bgc = variable, radio_value, command, bg
         w, h = (16 * S, 16 * S) if radio_value is not None else (34 * S, 18 * S)
@@ -293,8 +315,31 @@ class Panel(tk.Frame):
         round_rect(self.cv, S, S, PANEL_W - S, h - S, 18 * S, fill=PANEL, outline=LINE, width=2 * S, tags="bev")
 
 
-def label(parent, text="", font="r", fg=TXT, **kw):
-    return tk.Label(parent, text=text, font=FONTS[font], fg=fg, bg=parent["bg"], **kw)
+def label(parent, text="", font="r", fg=None, **kw):
+    return tk.Label(parent, text=text, font=FONTS[font], fg=fg or TXT, bg=parent["bg"], **kw)
+
+
+class NavItem(tk.Canvas):
+    """왼쪽 메뉴 버튼 (아이콘 + 글자, 선택되면 분홍 배경)."""
+
+    def __init__(self, parent, icon, text, command):
+        super().__init__(parent, width=SIDE_W - 12 * S, height=58 * S, bg=SIDEBAR, highlightthickness=0,
+                         cursor="hand2")
+        self.icon, self.text, self.command, self.selected = icon, text, command, False
+        self.bind("<Button-1>", lambda e: command())
+        self.draw()
+
+    def select(self, on):
+        self.selected = on
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        w, h = int(self["width"]), int(self["height"])
+        if self.selected:
+            round_rect(self, 2 * S, 2 * S, w - 2 * S, h - 2 * S, 14 * S, fill=NAV_SEL, outline="")
+        self.create_image(w / 2, h / 2 - 8 * S, image=self.icon)
+        self.create_text(w / 2, h - 13 * S, text=self.text, font=FONTS["r"], fill=ACCENT if self.selected else TXT)
 
 
 class PixelStepper(tk.Frame):
@@ -347,7 +392,7 @@ class PickDialog(tk.Toplevel):
         pil = pil.resize((vw, vh), Image.NEAREST if s >= 1 else Image.LANCZOS)
         self.photo = ImageTk.PhotoImage(pil)
 
-        tk.Label(self, text=guide, font=FONTS["b"], fg=ACCENT, bg="#fde3e3", justify="left",
+        tk.Label(self, text=guide, font=FONTS["b"], fg=ACCENT, bg=GUIDE_BG, justify="left",
                  padx=10 * S, pady=6 * S, highlightthickness=0
                  ).pack(anchor="w", padx=10 * S, pady=(8 * S, 6 * S))
         self.cv = tk.Canvas(self, width=vw, height=vh, highlightthickness=2 * S, highlightbackground=LINE,
@@ -479,10 +524,16 @@ class App:
         self.waiting_item = None
         self.f7 = threading.Event()
 
+        self.theme = self.cfg.get("theme", "light")
+        self.page = "fish"
+        self.topmost = True
+        self.notes = []
+        apply_theme(self.theme)
         register_fonts()
         self.root = tk.Tk()
         S = max(1, round(self.root.winfo_fpixels("1i") / 96))
         PANEL_W = 400 * S
+        globals()["SIDE_W"] = 78 * S
         setup_fonts(self.root)
         self.root.title("마크 낚시 매크로")
         self.root.configure(bg=SKY)
@@ -496,6 +547,7 @@ class App:
             pass
 
         self.build()
+        self.show_page("fish")
 
         self.macro = None
         threading.Thread(target=self.worker, daemon=True).start()
@@ -506,15 +558,36 @@ class App:
         self.anim_t = 0
         self.root.after(100, self.tick)
         self.root.after(150, self.animate)
-        self.log("준비 완료! ① 설정 → ② 시작 순서로 진행해", "good")
+        self.log("준비 완료! 왼쪽 '설정'에서 지정하고 '낚시'에서 시작해", "good")
 
     # ---------- 레이아웃 ----------
     def build(self):
         m = 10 * S
+        self.root.configure(bg=SKY)
         self.build_header()
+        main = tk.Frame(self.root, bg=SKY)
+        main.pack(fill="both", expand=True)
+        side = tk.Frame(main, bg=SIDEBAR, width=SIDE_W)
+        side.pack(side="left", fill="y")
+        area = tk.Frame(main, bg=SKY)
+        area.pack(side="left", fill="both", expand=True, padx=m, pady=(m, m))
+        self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "setup", "adv")}
+        self.nav = {}
+        for k, ic, text in (("fish", "rod", "낚시"), ("setup", "bobber", "설정"), ("adv", "emerald", "세부")):
+            self.nav[k] = NavItem(side, self.icons[ic], text, lambda k=k: self.show_page(k))
+            self.nav[k].pack(padx=6 * S, pady=(8 * S if k == "fish" else 2 * S, 0))
+        bottom = tk.Frame(side, bg=SIDEBAR)
+        bottom.pack(side="bottom", pady=10 * S)
+        n = 40 * S
+        PixelButton(bottom, "☀" if self.theme == "dark" else "☾", self.toggle_theme, width=n, height=n,
+                    font=FONTS["m"]).pack(pady=(0, 6 * S))
+        self.pin_btn = PixelButton(bottom, "고정", self.toggle_top, "mint" if self.topmost else "gray",
+                                   width=n + 8 * S, height=26 * S)
+        self.pin_btn.pack()
+        self.root.attributes("-topmost", self.topmost)
 
-        p1 = Panel(self.root, "① 화면 위치 설정", self.icons["bobber"])
-        p1.pack(padx=m, pady=(m, 0))
+        p1 = Panel(self.pages["setup"], "화면 위치 설정", self.icons["bobber"])
+        p1.pack()
         c = p1.content
         c.columnconfigure(2, weight=1)
         self.status_lbl = {}
@@ -545,15 +618,15 @@ class App:
         self.capture_mode = tk.StringVar(value="live")
         PixelCheck(mf, "게임에서 F7", self.capture_mode, radio_value="live").pack(side="left", padx=(0, 8 * S))
         PixelCheck(mf, "스크린샷 파일", self.capture_mode, radio_value="file").pack(side="left")
-        self.guide = tk.Label(c, text="", font=FONTS["b"], fg=ACCENT, bg="#fde3e3", padx=8 * S, pady=6 * S,
+        self.guide = tk.Label(c, text="", font=FONTS["b"], fg=ACCENT, bg=GUIDE_BG, padx=8 * S, pady=6 * S,
                               highlightthickness=0,
                               wraplength=PANEL_W - 40 * S, justify="left")
         self.guide_row = len(rows) + 2
 
-        p2 = Panel(self.root, "② 낚시 시작", self.icons["rod"])
-        p2.pack(padx=m, pady=(6 * S, 0))
+        p2 = Panel(self.pages["fish"], "낚시 시작", self.icons["rod"])
+        p2.pack()
         self.run_btn = PixelButton(p2.content, "▶ 낚시 시작! (F8)", self.toggle, "green",
-                                   width=PANEL_W - 16 * S, height=34 * S, font=FONTS["m"])
+                                   width=PANEL_W - 30 * S, height=44 * S, font=FONTS["m"])
         self.run_btn.pack(pady=(0, 4 * S))
         self.state_lbl = label(p2.content, "정지됨", "b")
         self.state_lbl.pack()
@@ -577,8 +650,8 @@ class App:
         for var in (self.stop_var, self.max_var):
             var.trace_add("write", lambda *a: self.save_durability())
 
-        p3 = Panel(self.root, "실시간 상태", self.icons["heart"])
-        p3.pack(padx=m, pady=(6 * S, 0))
+        p3 = Panel(self.pages["fish"], "실시간 상태", self.icons["heart"])
+        p3.pack(pady=(8 * S, 0))
         g = tk.Frame(p3.content, bg=PANEL)
         g.pack(fill="x")
         self.vals = {}
@@ -594,16 +667,8 @@ class App:
         self.bar_cv = tk.Canvas(p3.content, width=PANEL_W - 16 * S, height=30 * S, bg=PANEL, highlightthickness=0)
         self.bar_cv.pack(pady=(6 * S, 0))
 
-        opt = tk.Frame(self.root, bg=SKY)
-        opt.pack(fill="x", padx=m + 2 * S, pady=(6 * S, 0))
-        self.show_adv = tk.BooleanVar(value=False)
-        PixelCheck(opt, "세부 설정", self.show_adv, self.toggle_adv, bg=SKY).pack(side="left")
-        self.top_var = tk.BooleanVar(value=True)
-        PixelCheck(opt, "항상 위", self.top_var,
-                   lambda: self.root.attributes("-topmost", self.top_var.get()), bg=SKY).pack(side="right")
-        self.root.attributes("-topmost", True)
-
-        self.adv = Panel(self.root, "세부 설정", self.icons["emerald"])
+        self.adv = Panel(self.pages["adv"], "세부 설정", self.icons["emerald"])
+        self.adv.pack()
         a = self.adv.content
         a.columnconfigure(0, weight=1)
         self.adv_vars = {}
@@ -618,27 +683,55 @@ class App:
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
             row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
 
-        self.note_panel = Panel(self.root, "알림", self.icons["chat"])
-        self.note_panel.pack(padx=m, pady=(6 * S, m))
-        self.notes = []
+        self.note_panel = Panel(self.pages["fish"], "알림", self.icons["chat"])
+        self.note_panel.pack(pady=(8 * S, 0))
         self.note_lbls = []
         for _ in range(4):
             lb = label(self.note_panel.content, "", anchor="w", justify="left", wraplength=PANEL_W - 30 * S)
             lb.pack(fill="x", anchor="w")
             self.note_lbls.append(lb)
 
+    def show_page(self, key):
+        self.page = key
+        for k, f in self.pages.items():
+            f.pack_forget()
+            self.nav[k].select(k == key)
+        self.pages[key].pack(fill="both", expand=True)
+
+    def toggle_top(self):
+        self.topmost = not self.topmost
+        self.root.attributes("-topmost", self.topmost)
+        self.pin_btn.set(variant="mint" if self.topmost else "gray")
+
+    def toggle_theme(self):
+        self.theme = "light" if self.theme == "dark" else "dark"
+        self.cfg["theme"] = self.theme
+        save_config(self.cfg)
+        self.rebuild()
+
+    def rebuild(self):
+        """테마 바꾸면 화면을 새로 그림 (매크로는 계속 돎)."""
+        apply_theme(self.theme)
+        self.icons_big.pop("fish_r", None)
+        for w in self.root.winfo_children():
+            w.destroy()
+        self.build()
+        self.show_page(self.page)
+        self.refresh_status()
+        self.render_notes()
+
     def build_header(self):
-        W, H = PANEL_W + 20 * S, 92 * S
+        W, H = SIDE_W + PANEL_W + 20 * S, 92 * S
         cv = self.header = tk.Canvas(self.root, width=W, height=H, highlightthickness=0, bg=SKY)
         cv.pack()
-        bands = ["#7cc6ef", "#8ccdf1", "#9cd5f3", "#acdcf5", SKY]
+        bands = HEADER + [SKY]
         bh = H // len(bands)
         for i, col in enumerate(bands):
             cv.create_rectangle(0, i * bh, W, (i + 1) * bh + bh, fill=col, outline="")
         P = 4 * S
         for cx, cy, cw in ((12, 14, 7), (W // S - 46, 8, 8)):
-            cv.create_rectangle(cx * S, cy * S, cx * S + cw * P, cy * S + 2 * P, fill="white", outline="")
-            cv.create_rectangle(cx * S + P, cy * S - P, cx * S + (cw - 3) * P, cy * S, fill="white", outline="")
+            cv.create_rectangle(cx * S, cy * S, cx * S + cw * P, cy * S + 2 * P, fill=CLOUD, outline="")
+            cv.create_rectangle(cx * S + P, cy * S - P, cx * S + (cw - 3) * P, cy * S, fill=CLOUD, outline="")
 
         water_y = H - 22 * S
         rnd = random.Random(3)
@@ -699,12 +792,6 @@ class App:
                     out.put("#%02x%02x%02x" % img.get(x, y), (w - 1 - x, y))
         return out
 
-    def toggle_adv(self):
-        if self.show_adv.get():
-            self.adv.pack(padx=10 * S, pady=(6 * S, 0), before=self.note_panel)
-        else:
-            self.adv.pack_forget()
-
     # ---------- 매크로 스레드 ----------
     def worker(self):
         self.macro = Macro(self.cfg, out=self.q.put, hotkeys=False)
@@ -715,16 +802,19 @@ class App:
             tag = ("bad" if ("오류" in msg or "알림" in msg or "정지 ->" in msg) else
                    "good" if ("입질" in msg or "끝" in msg or "완료" in msg or "감지" in msg) else
                    "warn" if ("시작" in msg or "F7" in msg) else None)
-        color = {"good": OK, "warn": "#8a6d00", "bad": BAD, "dim": MUTED}.get(tag, TXT)
         line = msg.splitlines()[0] if msg else ""
-        self.notes.insert(0, (time.strftime("%H:%M"), line, color))
-        del self.notes[len(self.note_lbls):]
-        for lb, item in zip(self.note_lbls, self.notes + [None] * len(self.note_lbls)):
-            if item is None:
+        self.notes.insert(0, (time.strftime("%H:%M"), line, tag))
+        del self.notes[4:]
+        self.render_notes()
+
+    def render_notes(self):
+        colors = {"good": OK, "warn": "#c48a00" if self.theme == "light" else "#ffd866", "bad": BAD}
+        for i, lb in enumerate(self.note_lbls):
+            if i >= len(self.notes):
                 lb.config(text="")
-            else:
-                t, text, col = item
-                lb.config(text=f"{t}  {text}", fg=col if lb is self.note_lbls[0] else MUTED)
+                continue
+            t, text, tag = self.notes[i]
+            lb.config(text=f"{t}  {text}", fg=colors.get(tag, TXT) if i == 0 else MUTED)
 
     def tick(self):
         while not self.q.empty():
@@ -789,7 +879,7 @@ class App:
         cv = self.bar_cv
         cv.delete("all")
         W, H = int(cv["width"]), int(cv["height"])
-        slot(cv, 0, 0, W, H, fill="#e7f3f8")
+        slot(cv, 0, 0, W, H, fill=BAR_BG)
         roi = self.cfg["bar_roi"]
         if not roi:
             cv.create_text(W // 2, H // 2, text="미니게임이 뜨면 바를 자동으로 찾아요", font=FONTS["r"], fill=MUTED)

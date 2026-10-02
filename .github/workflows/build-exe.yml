@@ -39,7 +39,7 @@ jobs:
       - name: Build exe
         run: >
           pyinstaller --noconfirm --onefile --windowed
-          --name MinecraftFishingMacro
+          --name MinecraftFishingMacro-v${{ inputs.version || 'dev' }}
           --icon icon.ico
           --add-data "fonts;fonts"
           --hidden-import app
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MinecraftFishingMacro
-          path: minecraft_fishing/dist/MinecraftFishingMacro.exe
+          path: minecraft_fishing/dist/*.exe
 
       - name: Release
         if: github.event_name == 'workflow_dispatch'
@@ -62,5 +62,5 @@ jobs:
           name: 마크 낚시 매크로 v${{ inputs.version || '1.0.0' }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          files: minecraft_fishing/dist/MinecraftFishingMacro.exe
+          files: minecraft_fishing/dist/*.exe
           body_path: CHANGELOG.md

@@ -13,7 +13,7 @@
 
 ## 받기
 
-**[Releases](../../releases/latest) 에서 `MinecraftFishingMacro.exe` 를 받아서 실행.** 설치 필요 없음.
+**[Releases](../../releases/latest) 에서 `MinecraftFishingMacro-v버전.exe` 를 받아서 실행.** 설치 필요 없음.
 
 코드 서명이 없는 무료 프로그램이라 경고가 뜰 수 있어요.
 

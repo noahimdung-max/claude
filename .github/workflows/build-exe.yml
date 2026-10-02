@@ -1,9 +1,15 @@
 name: build-exe
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "버전 (예: 1.0.0)"
+        required: true
+        default: "1.0.0"
+  push:
+    branches: ["claude/bold-darwin-1zygnn"]
+    paths: [".github/workflows/build-exe.yml"]
 
 permissions:
   contents: write
@@ -42,9 +48,12 @@ jobs:
           path: minecraft_fishing/dist/MinecraftFishingMacro.exe
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ inputs.version || '1.0.0' }}
+          name: 마크 낚시 매크로 v${{ inputs.version || '1.0.0' }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           files: minecraft_fishing/dist/MinecraftFishingMacro.exe
           body: |
             마인크래프트 낚시 매크로 (Windows 10/11 64비트)

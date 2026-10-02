@@ -14,6 +14,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
@@ -24,7 +25,7 @@ except Exception:
 
 import keyboard
 
-from common import (SUBTITLE_PATH, Screen, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
+from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi)
 from fishing_macro import Macro
@@ -835,21 +836,18 @@ class App:
             if not roi:
                 return
             x, y, w, h = roi
-            crop = img[y:y + h, x:x + w]
-            while True:
-                pt = ask(self.root, crop, "[찌 색] 찌의 빨간 부분을 클릭", mode="point", max_size=(800, 500))
-                if not pt:
-                    return
-                color = [int(v) for v in crop[pt[1], pt[0]]]
-                mask = color_mask(crop, color, c["tolerance"])
-                ok = ask(self.root, overlay(crop, mask),
-                         f"초록 = 감지된 부분 ({int(mask.sum())}px)\n찌만 초록이면 확인, 배경까지 초록이면 다시 하기",
-                         mode="view", max_size=(800, 500))
-                if ok is None:
-                    return
-                if ok:
-                    break
-            c["bobber_roi"], c["bobber_color"] = roi, color
+            crop = img[y:y + h, x:x + w].copy()
+            H, W = img.shape[:2]
+            found = find_bobber(crop, (W / 2 - x, H / 2 - y), max_side=max(40, int(0.075 * H)))
+            if found:
+                bx, by, bw, bh = found
+                cv2.rectangle(crop, (bx - 4, by - 4), (bx + bw + 4, by + bh + 4), (0, 255, 0), 2)
+                msg = "초록 네모 = 찾은 찌. 맞으면 확인"
+            else:
+                msg = "지금 화면에선 찌를 못 찾았어 (찌가 안 보이거나 너무 어두움).\n영역만 저장하려면 확인"
+            if not ask(self.root, crop, msg, mode="view", max_size=(900, 500)):
+                return
+            c["bobber_roi"] = roi
             self.log("찌 설정 완료!", "good")
 
         elif item == "rod":

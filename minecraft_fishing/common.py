@@ -83,13 +83,37 @@ def _bgr(img):
     return f[..., 0], f[..., 1], f[..., 2]
 
 
-def bobber_mask(img, cfg):
-    """찌 빨간 부분. 지정 색 근처 + 진한 빨강 규칙 (주황 랜턴 등은 제외)."""
-    b, g, r = _bgr(img)
-    rule = (r > 130) & (r > g + 90) & (r > b + 90) & (g < 110)
-    if cfg["bobber_color"]:
-        rule |= color_mask(img, cfg["bobber_color"], cfg["tolerance"])
-    return rule
+def bobber_mask(img, cfg=None):
+    """찌 빨간 부분: 선명한 빨강 (어두울 때도 잡히게 밝기 기준은 낮게). 고른 색은 안 씀
+    (해질녘 하늘까지 잡혀서). 하늘 같은 큰 덩어리는 find_bobber 의 모양 검사로 걸러냄."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return ((h <= 10) | (h >= 170)) & (s >= 150) & (v >= 60)
+
+
+def find_bobber(img, center, ignore=None, min_px=6, max_side=80):
+    """찌 찾기: '작은 빨간 덩어리 + 바로 위나 아래에 붙은 흰 부분' 중 center(조준점)에 가장 가까운 것.
+    ignore: 던지기 전부터 있던 빨간 물체 마스크. 반환 (x, y, w, h) 또는 None"""
+    red = bobber_mask(img)
+    if ignore is not None and ignore.shape == red.shape:
+        red &= ~ignore
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    light = (hsv[..., 1] <= 110) & (hsv[..., 2] >= 110)       # 흰 부분 (노을에 물들어도)
+    n, _, st, cent = cv2.connectedComponentsWithStats(
+        cv2.dilate(red.astype(np.uint8), np.ones((3, 3), np.uint8)))
+    best, best_d = None, None
+    for i in range(1, n):
+        x, y, w, h, area = (int(v) for v in st[i])
+        if area < min_px or w > max_side or h > max_side:
+            continue
+        band = max(2, h)
+        near_light = light[max(0, y - band):y, x:x + w].sum() + light[y + h:y + h + band, x:x + w].sum()
+        if near_light < 0.3 * area:
+            continue
+        d = (cent[i][0] - center[0]) ** 2 + (cent[i][1] - center[1]) ** 2
+        if best_d is None or d < best_d:
+            best, best_d = (x, y, w, h), d
+    return best
 
 
 def fish_mask(img, cfg):

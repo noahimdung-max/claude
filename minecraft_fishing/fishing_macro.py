@@ -18,7 +18,7 @@ import pydirectinput
 
 from pathlib import Path
 
-from common import (Screen, bobber_mask, bracket_mask, bracket_runs, color_mask, durability_value, fish_blob_x, fish_mask,
+from common import (Screen, bobber_mask, find_bobber, bracket_mask, bracket_runs, color_mask, durability_value, fish_blob_x, fish_mask,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
@@ -174,27 +174,25 @@ class Macro:
         return img, bobber_mask(img, self.cfg)
 
     def locate_bobber(self):
-        """던진 뒤 탐색 영역에서 새로 나타난 빨간 덩어리(찌)를 찾아 추적 영역 반환."""
+        """던진 뒤 탐색 영역에서 새로 나타난 찌('빨간 덩어리 + 흰 부분')를 조준점 가까이에서 찾아 추적 영역 반환."""
         c = self.cfg
         sx, sy, sw, sh = c["bobber_roi"]
+        mon = self.screen.mon
+        center = (mon["width"] / 2 - sx, mon["height"] / 2 - sy)       # 조준점 (탐색 영역 기준)
+        max_side = max(40, int(0.075 * mon["height"]))
         deadline = time.perf_counter() + 3.0
         img = None
         while time.perf_counter() < deadline:
             self.check()
-            img, m = self.bobber_search_mask()
-            if self.pre_mask is not None and self.pre_mask.shape == m.shape:
-                m = m & ~self.pre_mask          # 던지기 전부터 있던 빨간 물체 제외
-            n, _, st, _ = cv2.connectedComponentsWithStats(
-                cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8)))
-            if n > 1:
-                i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
-                x, y, w, h, area = (int(v) for v in st[i])
-                if area >= c["min_pixels"]:
-                    self.bobber_h = h
-                    mx, my = max(10, w), max(10, 2 * h)
-                    x0, y0 = max(0, x - mx), max(0, y - my)
-                    x1, y1 = min(sw, x + w + mx), min(sh, y + h + 2 * my)
-                    return [sx + x0, sy + y0, x1 - x0, y1 - y0]
+            img = self.screen.grab(c["bobber_roi"])
+            found = find_bobber(img, center, self.pre_mask, c["min_pixels"], max_side)
+            if found:
+                x, y, w, h = found
+                self.bobber_h = h
+                mx, my = max(10, w), max(10, 2 * h)
+                x0, y0 = max(0, x - mx), max(0, y - my)
+                x1, y1 = min(sw, x + w + mx), min(sh, y + h + 2 * my)
+                return [sx + x0, sy + y0, x1 - x0, y1 - y0]
             time.sleep(0.05)
         if img is not None:
             self.save_debug(img, "debug_bobber.png", "찌 못 찾음")

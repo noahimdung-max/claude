@@ -70,6 +70,10 @@ jobs:
       - name: Smoke test (import)
         run: python -c "import app, fishing_macro, common; print('import ok')"
 
+      - name: Smoke test (open window, every page)
+        timeout-minutes: 2
+        run: python -c "import app; a = app.App(); [a.show_page(k) or a.root.update() for k in a.pages]; a.toggle_theme(); a.root.update(); a.close(); print('ui ok')"
+
       - uses: actions/upload-artifact@v4
         with:
           name: MinecraftFishingMacro

@@ -812,7 +812,7 @@ class App:
 
     def build_guide(self):
         for i, (title, lines) in enumerate(self.GUIDE):
-            p = Panel(self.pages["guide"], title, self.icons[("chat", "emerald", "heart", "rod")[i]])
+            p = Panel(self.pages["guide"], title, self.icons[("chat", "emerald", "heart", "rod", "chest", "book")[i % 6]])
             p.pack(pady=(0 if i == 0 else 8 * S, 0))
             for ln in lines:
                 row = tk.Frame(p.content, bg=PANEL)

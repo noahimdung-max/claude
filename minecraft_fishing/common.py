@@ -28,7 +28,8 @@ DEFAULTS = {
     "gauge_full_ratio": 0.95,
     "durability_roi": None,      # [x, y, w, h] 핫바 낚싯대 칸의 내구도 줄만
     "durability_max": 64,        # 낚싯대 최대 내구도
-    "durability_stop": 5,        # 내구도가 이 값 이하가 되면 멈춤
+    "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
+    "durability_ignore": False,  # True 면 내구도 안 봄 (수선 낚싯대)
     "tolerance": 30,             # 색 허용 오차(채널별)
     "bar_tolerance": 45,         # 괄호는 픽셀마다 밝기 차이가 커서 넉넉히
     "gauge_tolerance": 20,

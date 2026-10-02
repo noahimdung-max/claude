@@ -9,6 +9,7 @@ import queue
 import random
 import sys
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
@@ -29,7 +30,6 @@ from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi)
 from fishing_macro import Macro
-from session_log import LOG_DIR, SessionLog
 
 HERE = Path(__file__).parent
 
@@ -288,11 +288,32 @@ def label(parent, text="", font="r", fg=TXT, **kw):
     return tk.Label(parent, text=text, font=FONTS[font], fg=fg, bg=parent["bg"], **kw)
 
 
+class PixelStepper(tk.Frame):
+    """마크 버튼 [-] 검은 입력칸 [+]"""
+
+    def __init__(self, parent, var, lo, hi, step, width=5):
+        bg = parent["bg"]
+        super().__init__(parent, bg=bg)
+        self.var, self.lo, self.hi, self.step = var, lo, hi, step
+        self.dec = 0 if float(step).is_integer() else len(str(step).split(".")[1])
+        n = 18 * S
+        PixelButton(self, "-", lambda: self.bump(-1), width=n, height=n, bg=bg).pack(side="left")
+        tk.Entry(self, textvariable=var, width=width, font=FONTS["b"], justify="center", bg="#000000",
+                 fg="#ffffff", insertbackground="#ffffff", relief="flat", bd=0, highlightthickness=2 * S,
+                 highlightbackground="#a0a0a0", highlightcolor="#ffffff").pack(side="left", padx=2 * S, ipady=S)
+        PixelButton(self, "+", lambda: self.bump(1), width=n, height=n, bg=bg).pack(side="left")
+
+    def bump(self, d):
+        try:
+            v = float(self.var.get())
+        except ValueError:
+            v = self.lo
+        v = min(self.hi, max(self.lo, v + d * self.step))
+        self.var.set(f"{v:.{self.dec}f}" if self.dec else str(int(round(v))))
+
+
 def spinbox(parent, var, lo, hi, step):
-    return tk.Spinbox(parent, from_=lo, to=hi, increment=step, textvariable=var, width=7, font=FONTS["r"],
-                      bg="#000000", fg="white", insertbackground="white", buttonbackground=PANEL,
-                      relief="flat", bd=0, highlightthickness=2 * S, highlightbackground="#a0a0a0",
-                      highlightcolor="#ffffff", justify="center")
+    return PixelStepper(parent, var, lo, hi, step)
 
 
 # ---------------------------------------------------------------- 영역 선택 창
@@ -445,7 +466,6 @@ class App:
     def __init__(self):
         global S, PANEL_W
         self.cfg = load_config()
-        self.slog = SessionLog()
         self.q = queue.Queue()
         self.waiting_item = None
         self.f7 = threading.Event()
@@ -530,15 +550,21 @@ class App:
         self.state_lbl.pack()
         label(p2.content, "시작 누르고 바로 게임 창 클릭! 게임 중엔 F8", fg=MUTED).pack()
         df = tk.Frame(p2.content, bg=PANEL)
-        df.pack(pady=(6 * S, 0))
-        tk.Label(df, image=self.icons["rod"], bg=PANEL).pack(side="left", padx=(0, 4 * S))
-        label(df, "내구도", "b").pack(side="left")
-        self.stop_var = tk.StringVar(value=str(self.cfg["durability_stop"]))
-        spinbox(df, self.stop_var, 1, 2000, 1).pack(side="left", padx=4 * S)
-        label(df, "이하가 되면 멈춤  (최대").pack(side="left")
+        df.pack(fill="x", pady=(8 * S, 0))
+        tk.Label(df, image=self.icons["rod"], bg=PANEL).grid(row=0, column=0, rowspan=2, padx=(0, 6 * S))
+        label(df, "내구도 지키기", "b").grid(row=0, column=1, sticky="w")
+        self.ignore_var = tk.BooleanVar(value=self.cfg["durability_ignore"])
+        PixelCheck(df, "안 봄 (수선 낚싯대)", self.ignore_var, self.save_durability).grid(
+            row=0, column=2, columnspan=3, sticky="e")
+        self.stop_var = tk.StringVar(value=str(self.cfg["durability_stop_pct"]))
         self.max_var = tk.StringVar(value=str(self.cfg["durability_max"]))
-        spinbox(df, self.max_var, 1, 2000, 1).pack(side="left", padx=4 * S)
-        label(df, ")").pack(side="left")
+        r2 = tk.Frame(df, bg=PANEL)
+        r2.grid(row=1, column=1, columnspan=4, sticky="w", pady=(3 * S, 0))
+        spinbox(r2, self.stop_var, 1, 99, 5).pack(side="left")
+        label(r2, "% 이하면 멈춤").pack(side="left", padx=(4 * S, 12 * S))
+        label(r2, "최대").pack(side="left", padx=(0, 4 * S))
+        spinbox(r2, self.max_var, 1, 2000, 1).pack(side="left")
+        df.columnconfigure(2, weight=1)
         for var in (self.stop_var, self.max_var):
             var.trace_add("write", lambda *a: self.save_durability())
 
@@ -563,13 +589,9 @@ class App:
         opt.pack(fill="x", padx=m + 2 * S, pady=(6 * S, 0))
         self.show_adv = tk.BooleanVar(value=False)
         PixelCheck(opt, "세부 설정", self.show_adv, self.toggle_adv, bg=SKY).pack(side="left")
-        self.debug_var = tk.BooleanVar(value=False)
-        PixelCheck(opt, "자세한 로그", self.debug_var,
-                   lambda: self.macro and setattr(self.macro, "debug", self.debug_var.get()),
-                   bg=SKY).pack(side="left", padx=10 * S)
         self.top_var = tk.BooleanVar(value=True)
         PixelCheck(opt, "항상 위", self.top_var,
-                   lambda: self.root.attributes("-topmost", self.top_var.get()), bg=SKY).pack(side="left")
+                   lambda: self.root.attributes("-topmost", self.top_var.get()), bg=SKY).pack(side="right")
         self.root.attributes("-topmost", True)
 
         self.adv = Panel(self.root, "세부 설정", self.icons["emerald"])
@@ -587,18 +609,14 @@ class App:
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
             row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
 
-        self.log_wrap = tk.Frame(self.root, bg=SLOT_SH, padx=2 * S, pady=2 * S)
-        self.log_wrap.pack(padx=m, pady=(6 * S, 4 * S), fill="x")
-        self.log_box = tk.Text(self.log_wrap, height=7, width=1, font=FONTS["r"], bg="#101010", fg="white",
-                               relief="flat", bd=0, padx=6 * S, pady=4 * S, state="disabled", wrap="char",
-                               cursor="arrow")
-        self.log_box.pack(fill="x")
-        lb = tk.Frame(self.root, bg=SKY)
-        lb.pack(fill="x", padx=m, pady=(0, m))
-        PixelButton(lb, "로그 폴더 열기", self.open_logs, bg=SKY).pack(side="left")
-        PixelButton(lb, "문제 생기면: 보내기용 압축", self.pack_logs, "green", bg=SKY).pack(side="right")
-        for tag, color in (("good", "#55ff55"), ("warn", "#ffff55"), ("bad", "#ff5555"), ("dim", "#aaaaaa")):
-            self.log_box.tag_configure(tag, foreground=color)
+        self.note_panel = Panel(self.root, "알림", self.icons["chat"])
+        self.note_panel.pack(padx=m, pady=(6 * S, m))
+        self.notes = []
+        self.note_lbls = []
+        for _ in range(4):
+            lb = label(self.note_panel.content, "", anchor="w", justify="left", wraplength=PANEL_W - 30 * S)
+            lb.pack(fill="x", anchor="w")
+            self.note_lbls.append(lb)
 
     def build_header(self):
         W, H = PANEL_W + 20 * S, 92 * S
@@ -674,31 +692,34 @@ class App:
 
     def toggle_adv(self):
         if self.show_adv.get():
-            self.adv.pack(padx=10 * S, pady=(6 * S, 0), before=self.log_wrap)
+            self.adv.pack(padx=10 * S, pady=(6 * S, 0), before=self.note_panel)
         else:
             self.adv.pack_forget()
 
     # ---------- 매크로 스레드 ----------
     def worker(self):
-        self.macro = Macro(self.cfg, out=self.q.put, hotkeys=False, logger=self.slog)
+        self.macro = Macro(self.cfg, out=self.q.put, hotkeys=False)
         self.macro.run()
 
-    def log(self, msg, tag=None, from_macro=False):
-        if not from_macro:
-            self.slog.write("UI", msg)
+    def log(self, msg, tag=None):
         if tag is None:
-            tag = ("bad" if ("오류" in msg or "알림" in msg) else
+            tag = ("bad" if ("오류" in msg or "알림" in msg or "정지 ->" in msg) else
                    "good" if ("입질" in msg or "끝" in msg or "완료" in msg or "감지" in msg) else
-                   "warn" if ("시작" in msg or "F7" in msg) else
-                   "dim" if ("px=" in msg or "zone=" in msg) else None)
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", "> " + msg + "\n", tag or ())
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+                   "warn" if ("시작" in msg or "F7" in msg) else None)
+        color = {"good": OK, "warn": "#8a6d00", "bad": BAD, "dim": MUTED}.get(tag, TXT)
+        line = msg.splitlines()[0] if msg else ""
+        self.notes.insert(0, (time.strftime("%H:%M"), line, color))
+        del self.notes[len(self.note_lbls):]
+        for lb, item in zip(self.note_lbls, self.notes + [None] * len(self.note_lbls)):
+            if item is None:
+                lb.config(text="")
+            else:
+                t, text, col = item
+                lb.config(text=f"{t}  {text}", fg=col if lb is self.note_lbls[0] else MUTED)
 
     def tick(self):
         while not self.q.empty():
-            self.log(self.q.get(), from_macro=True)
+            self.log(self.q.get())
 
         if self.f7.is_set():
             self.f7.clear()
@@ -740,9 +761,11 @@ class App:
             self.dura_cv.grid_forget()
             return
         val, kind = d
-        mx, stop = self.cfg["durability_max"], self.cfg["durability_stop"]
-        danger = kind == "low" or val <= stop
-        v.config(text=f"{'1~2' if kind == 'low' else val}/{mx}", fg=BAD if danger else OK, width=7)
+        mx = self.cfg["durability_max"]
+        stop = mx * self.cfg["durability_stop_pct"] / 100
+        danger = not self.cfg["durability_ignore"] and (kind == "low" or val <= stop)
+        v.config(text=f"{'1~2' if kind == 'low' else val}/{mx}", width=7,
+                 fg=MUTED if self.cfg["durability_ignore"] else BAD if danger else OK)
         frac = 0 if kind == "low" else min(1, val / mx)
         r, g, b = colorsys.hsv_to_rgb(frac / 3, 1, 1)
         c = self.dura_cv
@@ -904,13 +927,14 @@ class App:
         self.refresh_status()
 
     def save_durability(self):
+        self.cfg["durability_ignore"] = self.ignore_var.get()
         try:
-            stop, mx = int(self.stop_var.get()), int(self.max_var.get())
+            pct, mx = int(float(self.stop_var.get())), int(float(self.max_var.get()))
         except ValueError:
+            save_config(self.cfg)
             return                       # 입력 중 (빈칸 등)
-        if stop < 1 or mx < 1:
-            return
-        self.cfg["durability_stop"], self.cfg["durability_max"] = stop, mx
+        if 1 <= pct <= 99 and mx >= 1:
+            self.cfg["durability_stop_pct"], self.cfg["durability_max"] = pct, mx
         save_config(self.cfg)
 
     def change_mode(self):
@@ -944,21 +968,7 @@ class App:
         if self.macro:
             self.macro.toggle()
 
-    def open_logs(self):
-        try:
-            import os
-            os.startfile(LOG_DIR)
-        except Exception as e:
-            messagebox.showinfo("로그 폴더", f"{LOG_DIR}\n({e})")
-
-    def pack_logs(self):
-        from common import CONFIG_PATH
-        out = self.slog.pack(extra=[CONFIG_PATH, SUBTITLE_PATH])
-        self.log(f"보내기용 압축 만듦: {out.name} (logs 폴더) -> 이 파일 보내줘", "good")
-        self.open_logs()
-
     def close(self):
-        self.slog.write("END", "앱 종료")
         if self.macro:
             self.macro.quit = True
             self.macro.running = False

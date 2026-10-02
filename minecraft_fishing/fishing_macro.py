@@ -16,16 +16,24 @@ import cv2
 import numpy as np
 import pydirectinput
 
-from pathlib import Path
-
-from common import (Screen, bobber_mask, find_bobber, bracket_mask, bracket_runs, color_mask, durability_value, fish_blob_x, fish_mask,
+from common import (Screen, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
-from session_log import SessionLog
-
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
+
+
+class NullLog:
+    """기록 안 함 (로그 기능 제거)."""
+    def write(self, *a):
+        pass
+
+    def snap(self, *a):
+        pass
+
+    def config(self, *a):
+        pass
 
 
 def alert(msg):
@@ -49,7 +57,7 @@ class Macro:
     def __init__(self, cfg, debug=False, out=print, hotkeys=True, logger=None):
         self.cfg = cfg
         self.debug = debug
-        self.logger = logger or SessionLog()
+        self.logger = logger or NullLog()
         self._ui_out = out
         self.last_view = None            # 마지막으로 캡처한 바 화면 (기록용)
         self.screen = Screen(cfg["monitor"])
@@ -198,17 +206,11 @@ class Macro:
             self.save_debug(img, "debug_bobber.png", "찌 못 찾음")
         return None
 
-    def save_debug(self, img, name="debug_bar.png", what=None):
-        from PIL import Image
-        path = Path(__file__).with_name(name)
-        Image.fromarray(np.ascontiguousarray(img[:, :, ::-1])).save(path)
-        self.logger.snap(img, path.stem)
+    def save_debug(self, img, name=None, what=None):
         if what:
-            self.out(f"[{what}] 탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
+            self.out(f"[{what}]")
             return
-        f, b = fish_mask(img, self.cfg), bracket_mask(img, self.cfg)
-        self.out(f"[바 못 찾음] 물고기색 {int(f.sum())}px, 괄호색 {int(b.sum())}px 감지. "
-                 f"탐색 화면을 {path.name} 로 저장했어 -> 이 파일 보내줘")
+        self.out("[바 못 찾음] 미니게임이 떠 있을 때 '직접'으로 바를 지정해줘")
 
     def bar_state(self):
         """(미니게임 중인지, 잡는 구간 중심 x, 물고기 x). 바 좌표 기준."""
@@ -275,15 +277,19 @@ class Macro:
         self.stats["dura"] = d
         return d
 
+    def durability_limit(self):
+        c = self.cfg
+        return c["durability_max"] * c["durability_stop_pct"] / 100
+
     def durability_ok(self):
         d = self.durability_reading()
-        if d is None:
+        if d is None or self.cfg["durability_ignore"]:
             return True
         val, kind = d
         self.log(f"내구도 {val}/{self.cfg['durability_max']} ({kind})")
         if kind == "low":                # 1~2 는 화면으로 구분이 안 됨 -> 무조건 멈춤
             return False
-        return val > self.cfg["durability_stop"]
+        return val > self.durability_limit()
 
     def sample(self):
         """대기 중 상태 표시용."""
@@ -492,7 +498,8 @@ class Macro:
             self.running = False
             val, kind = self.stats["dura"]
             now = "1~2" if kind == "low" else str(val)
-            msg = f"낚싯대 내구도 {now}/{self.cfg['durability_max']} (멈춤 기준 {self.cfg['durability_stop']} 이하) -> 정지"
+            msg = (f"낚싯대 내구도 {now}/{self.cfg['durability_max']} "
+                   f"(멈춤 기준 {self.cfg['durability_stop_pct']}% 이하) -> 정지")
             self.out("[알림] " + msg)
             alert(msg)
             raise Stop

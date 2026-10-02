@@ -24,7 +24,9 @@ except Exception:
 
 import keyboard
 
-from common import Screen, bracket_mask, color_mask, durability_hue, fish_mask, load_config, save_config
+from common import (SUBTITLE_PATH, Screen, bracket_mask, color_mask, durability_hue, fish_mask, gauge_present,
+                    load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
+                    subtitle_search_roi, view_roi)
 from fishing_macro import Macro
 
 HERE = Path(__file__).parent
@@ -83,6 +85,17 @@ SPRITES = {
         "..kGGdk..",
         "...kkk...",
     ], {"k": "#06331a", "G": "#17dd62", "h": "#b5ffd0", "d": "#0b8a3a"}),
+    "chat": ([
+        "kkkkkkkkkk",
+        "kWWWWWWWWk",
+        "kWkkWkkkWk",
+        "kWWWWWWWWk",
+        "kWkkkWkkWk",
+        "kWWWWWWWWk",
+        "kkkWkkkkkk",
+        "..kWk.....",
+        "..kk......",
+    ], {"k": "#3f3f3f", "W": "#ffffff"}),
     "heart": ([
         ".kk...kk.",
         "kRRk.kRRk",
@@ -408,11 +421,14 @@ def overlay(crop, mask):
 # ---------------------------------------------------------------- 메인 앱
 class App:
     ITEMS = [
-        ("bobber", "bobber", "찌", "물을 바라보고 찌가 떠 있을 때"),
+        ("subtitle", "chat", "입질 자막", "직접 낚시하다 입질 와서 자막 '낚시찌 ... 첨벙'이 떴을 때"),
+        ("bobber", "bobber", "찌 (예비)", "물을 바라보고 찌가 떠 있을 때"),
         ("rod", "rod", "낚싯대 내구도", "핫바에 낚싯대 내구도 줄이 보일 때"),
         ("gauge", "emerald", "원형 게이지", "게이지가 '가득 찬' 순간 (스크린샷 파일 추천)"),
     ]
     SETTINGS = [
+        ("subtitle_threshold", "자막 일치 기준 (0~1)", 0.5, 0.99, 0.01),
+        ("bite_confirm_frames", "입질 확인 횟수 (연속)", 1, 5, 1),
         ("bite_drop_ratio", "입질: 찌가 이 비율 아래로 줄면", 0.1, 0.95, 0.05),
         ("bite_dip_px", "입질: 찌가 이만큼(px) 내려가면", 1, 30, 1),
         ("tolerance", "색 허용 오차", 5, 80, 1),
@@ -470,8 +486,15 @@ class App:
         c = p1.content
         c.columnconfigure(2, weight=1)
         self.status_lbl = {}
+        bf = tk.Frame(c, bg=PANEL)
+        bf.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4 * S))
+        label(bf, "입질 감지 :", "b").pack(side="left", padx=(0, 6 * S))
+        self.bite_mode = tk.StringVar(value=self.cfg["bite_mode"])
+        PixelCheck(bf, "자막 (추천)", self.bite_mode, self.change_mode, radio_value="subtitle").pack(
+            side="left", padx=(0, 8 * S))
+        PixelCheck(bf, "찌 화면 (예비)", self.bite_mode, self.change_mode, radio_value="bobber").pack(side="left")
         rows = [(k, ic, n) for k, ic, n, _ in self.ITEMS] + [("bar", "fish", "미니게임 바")]
-        for r, (key, ic, name) in enumerate(rows):
+        for r, (key, ic, name) in enumerate(rows, start=1):
             tk.Label(c, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=0, pady=2 * S)
             label(c, name, "b").grid(row=r, column=1, sticky="w", padx=(4 * S, 8 * S))
             self.status_lbl[key] = label(c)
@@ -485,7 +508,7 @@ class App:
             btn.grid(row=r, column=3, pady=2 * S)
 
         mf = tk.Frame(c, bg=PANEL)
-        mf.grid(row=len(rows), column=0, columnspan=4, sticky="w", pady=(6 * S, 0))
+        mf.grid(row=len(rows) + 1, column=0, columnspan=4, sticky="w", pady=(6 * S, 0))
         label(mf, "화면 가져오기 :").pack(side="left", padx=(0, 6 * S))
         self.capture_mode = tk.StringVar(value="live")
         PixelCheck(mf, "게임에서 F7", self.capture_mode, radio_value="live").pack(side="left", padx=(0, 8 * S))
@@ -493,7 +516,7 @@ class App:
         self.guide = tk.Label(c, text="", font=FONTS["b"], fg="#ffff55", bg="#1a0a2a", padx=6 * S, pady=4 * S,
                               highlightthickness=2 * S, highlightbackground="#5a2bd6",
                               wraplength=PANEL_W - 40 * S, justify="left")
-        self.guide_row = len(rows) + 1
+        self.guide_row = len(rows) + 2
 
         p2 = Panel(self.root, "② 낚시 시작", self.icons["rod"])
         p2.pack(padx=m, pady=(6 * S, 0))
@@ -509,7 +532,7 @@ class App:
         g = tk.Frame(p3.content, bg=PANEL)
         g.pack(fill="x")
         self.vals = {}
-        for i, (k, ic, name) in enumerate([("caught", "fish", "낚은 물고기"), ("bobber", "bobber", "찌 픽셀"),
+        for i, (k, ic, name) in enumerate([("caught", "fish", "낚은 물고기"), ("bite", "chat", "입질 감지"),
                                            ("gauge", "emerald", "게이지"), ("hue", "rod", "내구도")]):
             r, col = divmod(i, 2)
             tk.Label(g, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=col * 3, pady=2 * S)
@@ -670,7 +693,12 @@ class App:
         if m:
             s = m.stats
             self.vals["caught"].config(text=f"{s['caught']}마리")
-            self.vals["bobber"].config(text="-" if not self.cfg["bobber_roi"] else f"{s['bobber_n']}px")
+            if self.cfg["bite_mode"] == "subtitle":
+                sub = s["sub"]
+                hit = sub is not None and sub >= self.cfg["subtitle_threshold"]
+                self.vals["bite"].config(text="-" if sub is None else f"자막 {sub:.0%}", fg=OK if hit else TXT)
+            else:
+                self.vals["bite"].config(text="-" if not self.cfg["bobber_roi"] else f"찌 {s['bobber_n']}px", fg=TXT)
             self.vals["gauge"].config(text="-" if s["gauge"] is None else f"{s['gauge']:.0%}")
             self.draw_durability(s["hue"])
             self.state_lbl.config(text=m.state, fg=OK if m.running else TXT)
@@ -709,7 +737,7 @@ class App:
         if not roi:
             cv.create_text(W // 2, H // 2, text="미니게임이 뜨면 바를 자동으로 찾아요", font=FONTS["r"], fill="#aed6f1")
             return
-        if s["zone"] is None and s["fish"] is None:
+        if not s["active"]:
             cv.create_text(W // 2, H // 2, text="미니게임 기다리는 중 ...", font=FONTS["r"], fill="#aed6f1")
             return
         scale = (W - 8 * S) / roi[2]
@@ -723,11 +751,14 @@ class App:
     # ---------- 설정 ----------
     def refresh_status(self):
         c = self.cfg
-        done = {"bobber": c["bobber_roi"], "rod": c["durability_roi"], "gauge": c["gauge_roi"]}
-        need = {"bobber": "필수", "rod": "추천", "gauge": "선택"}
+        sub_mode = c["bite_mode"] == "subtitle"
+        done = {"subtitle": c["subtitle_roi"] and SUBTITLE_PATH.exists(), "bobber": c["bobber_roi"],
+                "rod": c["durability_roi"], "gauge": c["gauge_roi"]}
+        need = {"subtitle": "필수" if sub_mode else "안 씀", "bobber": "안 씀" if sub_mode else "필수",
+                "rod": "추천", "gauge": "선택"}
         for k, ok in done.items():
             self.status_lbl[k].config(text="● 완료" if ok else f"○ 미설정 ({need[k]})",
-                                      fg=OK if ok else (BAD if k == "bobber" else MUTED))
+                                      fg=OK if ok else (BAD if need[k] == "필수" else MUTED))
         self.status_lbl["bar"].config(text="● 찾음" if c["bar_roi"] else "○ 자동으로 찾음",
                                       fg=OK if c["bar_roi"] else MUTED)
 
@@ -755,7 +786,27 @@ class App:
 
     def do_set(self, item, img):
         c = self.cfg
-        if item == "bobber":
+        if item == "subtitle":
+            rect = ask_roi(self.root, img, "입질 자막 - '낚시찌 ... 첨벙' 글자 한 줄 전체 (화살표 < > 는 빼고)")
+            if not rect:
+                return
+            x, y, w, h = rect
+            made = make_subtitle_template(img[y:y + h, x:x + w])
+            if made is None:
+                messagebox.showwarning("확인", "흰 자막 글자가 안 보여. 자막 글자 위를 다시 감싸줘.\n"
+                                       "(설정 > 접근성 > 텍스트 배경 불투명도를 올리면 잘 보여)")
+                return
+            tmpl, (tx, ty, tw, th) = made
+            if tw < 15 or th < 5:
+                messagebox.showwarning("확인", "너무 작게 잡혔어. 자막 글자 한 줄 전체를 감싸줘.")
+                return
+            save_subtitle_template(tmpl)
+            c["subtitle_roi"] = subtitle_search_roi([x + tx, y + ty, tw, th], img.shape[1], img.shape[0])
+            if self.macro:
+                self.macro.sub_tmpl = None
+            self.log("입질 자막 설정 완료! (실시간 상태의 '입질 감지'가 자막 뜰 때 80% 넘으면 정상)", "good")
+
+        elif item == "bobber":
             roi = ask_roi(self.root, img, "찌 영역 - 찌가 떨어질 수 있는 물 쪽을 넓게 (하트/핫바는 빼고)", precise=False)
             if not roi:
                 return
@@ -799,8 +850,13 @@ class App:
             view = crop.copy()
             view[f] = (0, 0, 255)
             view[b] = (0, 255, 0)
-            ok = ask(self.root, view, f"빨강 = 물고기 ({int(f.sum())}px), 초록 = 괄호 ({int(b.sum())}px)\n"
-                                      "둘 다 보이면 확인", mode="view", max_size=(1000, 300))
+            vr, row = view_roi(roi)
+            vx, vy, vw, vh = vr
+            _, above = split_view(img[vy:vy + vh, vx:vx + vw], row)
+            has_gauge = gauge_present(above, c)
+            ok = ask(self.root, view, f"빨강 = 물고기 ({int(f.sum())}px), 초록 = 괄호 ({int(b.sum())}px), "
+                                      f"바 위 게이지 {'있음' if has_gauge else '없음!'}\n"
+                                      "물고기·괄호가 보이고 게이지가 '있음'이면 확인", mode="view", max_size=(1000, 300))
             if not ok:
                 return
             c["bar_roi"] = roi
@@ -822,6 +878,12 @@ class App:
 
         save_config(c)
         self.refresh_status()
+
+    def change_mode(self):
+        self.cfg["bite_mode"] = self.bite_mode.get()
+        save_config(self.cfg)
+        self.refresh_status()
+        self.log("입질 감지: " + ("자막" if self.cfg["bite_mode"] == "subtitle" else "찌 화면 (예비)"), "warn")
 
     def reset_bar(self):
         self.cfg["bar_roi"] = None

@@ -63,9 +63,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: minecraft_fishing/dist/MinecraftFishingMacro.exe
-          body: |
-            마인크래프트 낚시 매크로 (Windows 10/11 64비트)
-
-            `MinecraftFishingMacro.exe` 하나만 받아서 실행하면 돼요. 설치 필요 없음.
-            설정(config.json, subtitle.png)은 exe 와 같은 폴더에 저장돼요.
-            사용법은 저장소 README 참고.
+          body_path: CHANGELOG.md

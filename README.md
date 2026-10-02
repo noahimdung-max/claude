@@ -30,6 +30,10 @@
 
 미니게임 바는 첫 미니게임 때 자동으로 찾아요. 잘못 잡히면 **설정 → 미니게임 바 → 자동** 또는 **직접**.
 
+## 패치 내역
+
+[CHANGELOG.md](CHANGELOG.md)
+
 ## 소스로 실행
 
 Python 3.10+ 설치 후 `minecraft_fishing/run.bat` 더블클릭.

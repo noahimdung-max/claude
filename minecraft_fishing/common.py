@@ -1,3 +1,4 @@
+import colorsys
 import json
 from pathlib import Path
 
@@ -26,7 +27,8 @@ DEFAULTS = {
     "gauge_full_pixels": 80,     # 게이지 가득 찼을 때 픽셀 수(캘리브레이션 시 자동 측정)
     "gauge_full_ratio": 0.95,
     "durability_roi": None,      # [x, y, w, h] 핫바 낚싯대 칸의 내구도 줄만
-    "durability_red_hue": 15,    # 내구도 바 색상(hue, 도) 이하면 빨강으로 판단
+    "durability_max": 64,        # 낚싯대 최대 내구도
+    "durability_stop": 5,        # 내구도가 이 값 이하가 되면 멈춤
     "tolerance": 30,             # 색 허용 오차(채널별)
     "bar_tolerance": 45,         # 괄호는 픽셀마다 밝기 차이가 커서 넉넉히
     "gauge_tolerance": 20,
@@ -97,6 +99,20 @@ def fish_mask(img, cfg):
     return rule | color_mask(img, cfg["fish_color"], cfg["tolerance"])
 
 
+def track_mask(img):
+    """미니게임 바 트랙 (파랑/청록)."""
+    b, g, r = _bgr(img)
+    return (b > r + 40) & (b > 40)
+
+
+def fishlike_mask(img):
+    """파란 계열이 아닌 선명한 색 (물고기는 종류마다 색이 다름: 초록, 노랑 ...)."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    blue = (h >= 85) & (h <= 115)
+    return (s >= 90) & (v >= 115) & ~blue
+
+
 def bracket_mask(img, cfg):
     """잡는 구간 괄호 ( ) 하늘색."""
     b, g, r = _bgr(img)
@@ -104,23 +120,29 @@ def bracket_mask(img, cfg):
     return rule | color_mask(img, cfg["bar_color"], cfg["bar_tolerance"])
 
 
-def durability_hue(img):
-    """내구도 바 색의 hue(0~360). 바가 안 보이면(내구도 가득) None."""
-    f = img.astype(np.float32)
+def durability_value(img, max_dur=64):
+    """핫바 낚싯대 내구도를 숫자로. 마크 공식: 바 색 hue = 120° x 남은/최대, 바 길이 = 13칸 x 남은/최대.
+    반환 (값, 종류)
+      종류 'color': 바 색으로 계산한 값
+      종류 'low'  : 검은 바탕 줄만 있고 색 바가 없음 = 남은 내구도 1~2 (마크가 너무 짧아서 안 그림)
+      종류 'full' : 내구도 바 자체가 없음 = 최대 (닳지 않음)"""
+    f = img.astype(np.int16)
     mx, mn = f.max(axis=2), f.min(axis=2)
-    m = (mx > 150) & (mx - mn > 80)
-    if m.sum() < 3:
-        return None
-    b, g, r = (f[..., i][m].mean() for i in range(3))
-    hi, lo = max(r, g, b), min(r, g, b)
-    d = hi - lo
-    if hi == r:
-        h = 60 * (((g - b) / d) % 6)
-    elif hi == g:
-        h = 60 * ((b - r) / d + 2)
-    else:
-        h = 60 * ((r - g) / d + 4)
-    return float(h)
+    pure = (mx >= 200) & (mn <= 40)          # 내구도 바는 채도 100% 색 (아이템 그림은 이렇게 안 쨍함)
+    per_row = pure.sum(axis=1)
+    if per_row.max() >= 2:
+        y = int(per_row.argmax())
+        px = img[y][pure[y]].astype(np.float32) / 255
+        b, g, r = px[:, 0].mean(), px[:, 1].mean(), px[:, 2].mean()
+        hue = colorsys.rgb_to_hsv(r, g, b)[0] * 360
+        if hue > 300:                        # 빨강 근처 (360 = 0)
+            hue = 0.0
+        val = min(max_dur, max(0, round(hue / 120 * max_dur)))
+        return int(val), "color"
+    black_rows = ((mx <= 25).sum(axis=1) >= max(4, img.shape[1] // 4))
+    if black_rows.any():
+        return 2, "low"
+    return int(max_dur), "full"
 
 
 # ---------------------------------------------------------------- 미니게임 바
@@ -140,9 +162,14 @@ def bracket_runs(bar, cfg):
 
 
 def fish_blob_x(bar, cfg):
-    """바 안에서 가장 큰 연두 덩어리(물고기)의 가운데 x. 너무 길쭉한 띠는 물고기가 아님."""
-    m = fish_mask(bar, cfg).astype(np.uint8)
-    n, _, st, cent = cv2.connectedComponentsWithStats(m)
+    """바 트랙 줄 안에서 가장 큰 '파랑이 아닌 선명한 덩어리'(물고기)의 가운데 x. 길쭉한 띠는 제외."""
+    m = fishlike_mask(bar)
+    rows = np.nonzero(track_mask(bar).mean(axis=1) >= 0.3)[0]
+    if rows.size == 0:
+        return None
+    m[:max(0, rows.min() - 2)] = False          # 위의 하트, 아래 핫바 등 제외
+    m[rows.max() + 3:] = False
+    n, _, st, cent = cv2.connectedComponentsWithStats(m.astype(np.uint8))
     if n <= 1:
         return None
     i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
@@ -173,55 +200,53 @@ def split_view(img, bar_row):
 
 
 def locate_bar(img, cfg):
-    """화면에서 미니게임 바 위치 자동 탐색. 물고기와 괄호가 같은 줄에 있고, 그 위 가운데에 게이지가 있는 곳.
+    """화면에서 미니게임 바 위치 자동 탐색.
+    가운데를 가로지르는 파란 트랙 띠 + 얇은 괄호 + 그 위 가운데 초록 게이지가 있는 곳. 물고기 색과 무관.
     반환: img 기준 [x, y, w, h] 또는 None."""
-    fish = fish_mask(img, cfg)
-    br = bracket_mask(img, cfg)
-    rows = np.nonzero((fish.sum(axis=1) >= 2) & (br.sum(axis=1) >= 1))[0]
-    groups = runs(rows, 1)
-    if not groups:
-        return None
-    y0, y1 = max(groups, key=lambda g: g[1] - g[0])
-    band = img[y0:y1 + 1].astype(np.int16)
-    b, r = band[..., 0], band[..., 2]
-    track = ((b > r + 40) & (b > 40)) | fish[y0:y1 + 1] | br[y0:y1 + 1]
-    good = track.mean(axis=0) >= 0.5
-
-    # 마크 HUD는 화면 가운데 정렬 -> 가운데에서 양쪽으로 바 끝까지 넓혀감
     H, W = img.shape[:2]
     cx = W // 2
-    gap = max(3, 2 * (y1 - y0 + 1))
+    q = max(20, W // 10)
+    track = track_mask(img)
+    good_px = track | bracket_mask(img, cfg) | fishlike_mask(img)
+    rows = np.nonzero(track[:, cx - q:cx + q].mean(axis=1) >= 0.4)[0]
 
-    def reach(step):
-        last, miss, x = None, 0, cx
-        while 0 <= x < W:
-            if good[x]:
-                last, miss = x, 0
-            else:
-                miss += 1
-                if miss > gap:
-                    break
-            x += step
-        return last
+    for y0, y1 in sorted(runs(rows, 1), key=lambda g: g[0] - g[1]):     # 두꺼운 띠부터
+        bh = y1 - y0 + 1
+        if bh < 2 or bh > H // 4:
+            continue
+        good = good_px[y0:y1 + 1].mean(axis=0) >= 0.5
+        gap = 3 * bh
 
-    left, right = reach(-1), reach(1)
-    if left is None or right is None:
-        return None
-    half = max(cx - left, right - cx)
-    if 2 * half < 10 * (y1 - y0 + 1):
-        return None
-    pad = 3
-    x0, x1 = max(0, cx - half - pad), min(W - 1, cx + half + pad)
-    yy0, yy1 = max(0, y0 - pad), min(H - 1, y1 + pad)
-    roi = [x0, yy0, x1 - x0 + 1, yy1 - yy0 + 1]
+        def reach(step):
+            last, miss, x = None, 0, cx
+            while 0 <= x < W:
+                if good[x]:
+                    last, miss = x, 0
+                else:
+                    miss += 1
+                    if miss > gap:
+                        break
+                x += step
+            return last
 
-    # 검증: 얇은 괄호가 있고, 바 위 가운데에 게이지가 있어야 함
-    vr, bar_row = view_roi(roi)
-    vx, vy, vw, vh = vr
-    bar_img, above = split_view(img[vy:vy + vh, vx:vx + vw], bar_row)
-    if not bracket_runs(bar_img, cfg) or not gauge_present(above, cfg):
-        return None
-    return roi
+        left, right = reach(-1), reach(1)
+        if left is None or right is None:
+            continue
+        half = max(cx - left, right - cx)
+        if 2 * half < 10 * bh:
+            continue
+        pad = 3
+        x0, x1 = max(0, cx - half - pad), min(W - 1, cx + half + pad)
+        yy0, yy1 = max(0, y0 - pad), min(H - 1, y1 + pad)
+        roi = [x0, yy0, x1 - x0 + 1, yy1 - yy0 + 1]
+
+        # 검증: 얇은 괄호가 있고, 바 위 가운데에 게이지가 있어야 함 (평소 경험치 바 등 제외)
+        vr, bar_row = view_roi(roi)
+        vx, vy, vw, vh = vr
+        bar_img, above = split_view(img[vy:vy + vh, vx:vx + vw], bar_row)
+        if bracket_runs(bar_img, cfg) and gauge_present(above, cfg):
+            return roi
+    return None
 
 
 # ---------------------------------------------------------------- 자막

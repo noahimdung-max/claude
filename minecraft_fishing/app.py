@@ -24,7 +24,7 @@ except Exception:
 
 import keyboard
 
-from common import (SUBTITLE_PATH, Screen, bracket_mask, color_mask, durability_hue, fish_mask, gauge_present,
+from common import (SUBTITLE_PATH, Screen, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi)
 from fishing_macro import Macro
@@ -526,6 +526,18 @@ class App:
         self.state_lbl = label(p2.content, "정지됨", "b")
         self.state_lbl.pack()
         label(p2.content, "시작 누르고 바로 게임 창 클릭! 게임 중엔 F8", fg=MUTED).pack()
+        df = tk.Frame(p2.content, bg=PANEL)
+        df.pack(pady=(6 * S, 0))
+        tk.Label(df, image=self.icons["rod"], bg=PANEL).pack(side="left", padx=(0, 4 * S))
+        label(df, "내구도", "b").pack(side="left")
+        self.stop_var = tk.StringVar(value=str(self.cfg["durability_stop"]))
+        spinbox(df, self.stop_var, 1, 2000, 1).pack(side="left", padx=4 * S)
+        label(df, "이하가 되면 멈춤  (최대").pack(side="left")
+        self.max_var = tk.StringVar(value=str(self.cfg["durability_max"]))
+        spinbox(df, self.max_var, 1, 2000, 1).pack(side="left", padx=4 * S)
+        label(df, ")").pack(side="left")
+        for var in (self.stop_var, self.max_var):
+            var.trace_add("write", lambda *a: self.save_durability())
 
         p3 = Panel(self.root, "실시간 상태", self.icons["heart"])
         p3.pack(padx=m, pady=(6 * S, 0))
@@ -533,7 +545,7 @@ class App:
         g.pack(fill="x")
         self.vals = {}
         for i, (k, ic, name) in enumerate([("caught", "fish", "낚은 물고기"), ("bite", "chat", "입질 감지"),
-                                           ("gauge", "emerald", "게이지"), ("hue", "rod", "내구도")]):
+                                           ("gauge", "emerald", "게이지"), ("dura", "rod", "내구도")]):
             r, col = divmod(i, 2)
             tk.Label(g, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=col * 3, pady=2 * S)
             label(g, name).grid(row=r, column=col * 3 + 1, sticky="w", padx=(2 * S, 6 * S))
@@ -700,7 +712,7 @@ class App:
             else:
                 self.vals["bite"].config(text="-" if not self.cfg["bobber_roi"] else f"찌 {s['bobber_n']}px", fg=TXT)
             self.vals["gauge"].config(text="-" if s["gauge"] is None else f"{s['gauge']:.0%}")
-            self.draw_durability(s["hue"])
+            self.draw_durability(s["dura"])
             self.state_lbl.config(text=m.state, fg=OK if m.running else TXT)
             if m.running:
                 self.run_btn.set("■ 그만 낚기 (F8)", "red")
@@ -712,20 +724,24 @@ class App:
 
         self.root.after(100, self.tick)
 
-    def draw_durability(self, hue):
-        v = self.vals["hue"]
-        if hue is None:
+    def draw_durability(self, d):
+        v = self.vals["dura"]
+        if d is None:
             v.config(text="-", fg=TXT)
             self.dura_cv.grid_forget()
             return
-        red = not (self.cfg["durability_red_hue"] < hue < 330)
-        v.config(text="위험!" if red else "괜찮음", fg=BAD if red else OK, width=6)
-        r, g, b = colorsys.hsv_to_rgb(hue / 360, 1, 1)
+        val, kind = d
+        mx, stop = self.cfg["durability_max"], self.cfg["durability_stop"]
+        danger = kind == "low" or val <= stop
+        v.config(text=f"{'1~2' if kind == 'low' else val}/{mx}", fg=BAD if danger else OK, width=7)
+        frac = 0 if kind == "low" else min(1, val / mx)
+        r, g, b = colorsys.hsv_to_rgb(frac / 3, 1, 1)
         c = self.dura_cv
         c.delete("all")
         c.create_rectangle(0, 0, 40 * S, 8 * S, fill="#000000", outline="")
-        c.create_rectangle(S, S, 39 * S, 6 * S, fill="#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255)),
-                           outline="")
+        if frac > 0:
+            c.create_rectangle(S, S, S + round(38 * S * frac), 6 * S, outline="",
+                               fill="#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255)))
         c.grid(row=1, column=6, sticky="w")
 
     def draw_bar(self, s):
@@ -833,12 +849,14 @@ class App:
             if not roi:
                 return
             x, y, w, h = roi
-            hue = durability_hue(img[y:y + h, x:x + w])
+            val, kind = durability_value(img[y:y + h, x:x + w], c["durability_max"])
             c["durability_roi"] = roi
-            if hue is None:
-                self.log("내구도 설정됨. 단, 지금은 색 줄이 안 보여 (가득이면 정상)", "warn")
+            if kind == "full":
+                self.log(f"내구도 설정됨. 지금은 내구도 줄이 안 보여서 최대({val})로 읽혀 (안 닳았으면 정상)", "warn")
+            elif kind == "low":
+                self.log("내구도 설정됨. 지금 내구도 1~2 (거의 부서짐)", "warn")
             else:
-                self.log(f"내구도 설정 완료! 현재 색 {hue:.0f}°", "good")
+                self.log(f"내구도 설정 완료! 지금 {val}/{c['durability_max']}", "good")
 
         elif item == "bar":
             roi = ask_roi(self.root, img, "미니게임 바 - 하트/게이지 빼고 바 줄만")
@@ -878,6 +896,16 @@ class App:
 
         save_config(c)
         self.refresh_status()
+
+    def save_durability(self):
+        try:
+            stop, mx = int(self.stop_var.get()), int(self.max_var.get())
+        except ValueError:
+            return                       # 입력 중 (빈칸 등)
+        if stop < 1 or mx < 1:
+            return
+        self.cfg["durability_stop"], self.cfg["durability_max"] = stop, mx
+        save_config(self.cfg)
 
     def change_mode(self):
         self.cfg["bite_mode"] = self.bite_mode.get()

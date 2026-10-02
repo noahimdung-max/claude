@@ -18,7 +18,7 @@ import pydirectinput
 
 from pathlib import Path
 
-from common import (Screen, bobber_mask, bracket_mask, bracket_runs, color_mask, durability_hue, fish_blob_x, fish_mask,
+from common import (Screen, bobber_mask, bracket_mask, bracket_runs, color_mask, durability_value, fish_blob_x, fish_mask,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi)
 
@@ -60,7 +60,7 @@ class Macro:
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None, "active": False,
-                      "sub": None, "gauge": None, "hue": None, "caught": 0}
+                      "sub": None, "gauge": None, "dura": None, "caught": 0}
         if hotkeys:
             import keyboard
             keyboard.add_hotkey("f8", self.toggle)
@@ -248,19 +248,22 @@ class Macro:
         self.stats["gauge"] = g
         return g
 
-    def durability_hue(self):
+    def durability_reading(self):
+        """(내구도 숫자, 종류) - 종류: color / low(1~2) / full. 영역 미설정이면 None."""
         c = self.cfg
-        hue = durability_hue(self.screen.grab(c["durability_roi"])) if c["durability_roi"] else None
-        self.stats["hue"] = hue
-        return hue
+        d = durability_value(self.screen.grab(c["durability_roi"]), c["durability_max"]) if c["durability_roi"] else None
+        self.stats["dura"] = d
+        return d
 
     def durability_ok(self):
-        if not self.cfg["durability_roi"]:
+        d = self.durability_reading()
+        if d is None:
             return True
-        hue = self.durability_hue()
-        self.log(f"내구도 hue={hue}")
-        # hue 0 근처 = 빨강. 330 이상도 빨강 계열
-        return hue is None or self.cfg["durability_red_hue"] < hue < 330
+        val, kind = d
+        self.log(f"내구도 {val}/{self.cfg['durability_max']} ({kind})")
+        if kind == "low":                # 1~2 는 화면으로 구분이 안 됨 -> 무조건 멈춤
+            return False
+        return val > self.cfg["durability_stop"]
 
     def sample(self):
         """대기 중 상태 표시용."""
@@ -269,7 +272,7 @@ class Macro:
         self.subtitle_score()
         self.bar_state()
         self.gauge_ratio()
-        self.durability_hue()
+        self.durability_reading()
 
     # ---------- 단계 ----------
     def wait_bite(self):
@@ -426,8 +429,11 @@ class Macro:
     def cycle(self):
         if not self.durability_ok():
             self.running = False
-            self.out("[알림] 낚싯대 내구도가 빨간색 -> 정지")
-            alert("낚싯대 내구도가 빨간색. 매크로 정지함.")
+            val, kind = self.stats["dura"]
+            now = "1~2" if kind == "low" else str(val)
+            msg = f"낚싯대 내구도 {now}/{self.cfg['durability_max']} (멈춤 기준 {self.cfg['durability_stop']} 이하) -> 정지"
+            self.out("[알림] " + msg)
+            alert(msg)
             raise Stop
         self.state = "던지는 중"
         if self.cfg["bite_mode"] == "bobber":
@@ -475,7 +481,7 @@ def preview(cfg):
             s = m.stats
             info = (f"자막 일치={fmt(s['sub'], '.0%')} | 찌 px={s['bobber_n']} | "
                     f"미니게임={'O' if s['active'] else 'X'} 구간={fmt(s['zone'], '.0f')} 물고기={fmt(s['fish'], '.0f')} | "
-                    f"게이지={fmt(s['gauge'], '.0%')} | 내구도 hue={fmt(s['hue'], '.0f')}")
+                    f"게이지={fmt(s['gauge'], '.0%')} | 내구도={'-' if s['dura'] is None else s['dura'][0]}")
             print("\r" + info + "    ", end="", flush=True)
             time.sleep(0.05)
     except KeyboardInterrupt:

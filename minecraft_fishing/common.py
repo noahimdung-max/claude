@@ -10,7 +10,8 @@ DEFAULTS = {
     "monitor": 1,
     "bobber_roi": None,          # [x, y, w, h] 찌 주변 영역
     "bobber_color": None,        # [B, G, R] 찌 빨간 부분
-    "bar_roi": None,             # [x, y, w, h] 미니게임 바 영역 (바 줄만, 위 게이지/하트 제외)
+    "bar_roi": None,             # [x, y, w, h] 미니게임 바 영역. 비워두면 첫 미니게임 때 자동 탐색 후 저장
+    "bar_search_roi": None,      # 자동 탐색 범위. 비워두면 화면 아래쪽 가운데
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
     "gauge_roi": None,           # [x, y, w, h] 바 위 원형 게이지
@@ -84,3 +85,35 @@ class Screen:
         x, y, w, h = roi
         box = {"left": self.mon["left"] + x, "top": self.mon["top"] + y, "width": w, "height": h}
         return np.ascontiguousarray(np.array(self.sct.grab(box))[:, :, :3])
+
+
+def _longest_run(idx, max_gap):
+    if idx.size == 0:
+        return None
+    groups = np.split(idx, np.nonzero(np.diff(idx) > max_gap)[0] + 1)
+    g = max(groups, key=lambda a: a[-1] - a[0])
+    return int(g[0]), int(g[-1])
+
+
+def locate_bar(img, cfg):
+    """화면에서 미니게임 바 위치 자동 탐색. 물고기와 괄호가 같은 줄에 있는 곳을 찾음.
+    반환: img 기준 [x, y, w, h] 또는 None."""
+    fish = color_mask(img, cfg["fish_color"], cfg["tolerance"])
+    br = color_mask(img, cfg["bar_color"], cfg["bar_tolerance"])
+    rows = np.nonzero((fish.sum(axis=1) >= 2) & (br.sum(axis=1) >= 1))[0]
+    yr = _longest_run(rows, 1)
+    if yr is None:
+        return None
+    y0, y1 = yr
+    band = img[y0:y1 + 1].astype(np.int16)
+    b, r = band[..., 0], band[..., 2]
+    track = ((b > r + 40) & (b > 40)) | fish[y0:y1 + 1] | br[y0:y1 + 1]
+    xr = _longest_run(np.nonzero(track.mean(axis=0) >= 0.5)[0], 3)
+    if xr is None or xr[1] - xr[0] < 10 * (y1 - y0 + 1):
+        return None
+    x0, x1 = xr
+    pad = 3
+    h, w = img.shape[:2]
+    x0, y0 = max(0, x0 - pad), max(0, y0 - pad)
+    x1, y1 = min(w - 1, x1 + pad), min(h - 1, y1 + pad)
+    return [x0, y0, x1 - x0 + 1, y1 - y0 + 1]

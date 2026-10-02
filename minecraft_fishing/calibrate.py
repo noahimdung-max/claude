@@ -8,7 +8,11 @@
   python calibrate.py --video "C:/Users/tyt18/Videos/NVIDIA/Minecraft/Minecraft 2026.10.02 - 20.22.59.02.mp4"
   -> 슬라이더로 장면 찾고 Enter
 
-한 항목만 다시: --only bobber / bar / gauge / rod
+스크린샷 파일로:
+  python calibrate.py --only bar --image 스크린샷.png
+
+기본은 찌(bobber)와 내구도(rod)만 설정. 미니게임 바는 매크로가 자동으로 찾음.
+바 자동 감지가 안 될 때만: --only bar / 게이지 끝 판정 쓰려면: --only gauge
 """
 import argparse
 import sys
@@ -82,6 +86,17 @@ class VideoSource:
                 return frame
             elif k == 27:
                 sys.exit("취소됨")
+
+
+class ImageSource:
+    def __init__(self, path):
+        self.img = cv2.imread(path)
+        if self.img is None:
+            sys.exit(f"이미지 열기 실패: {path}")
+
+    def pick(self, what):
+        print(f"\n[{what}] 이미지 사용")
+        return self.img
 
 
 class LiveSource:
@@ -168,24 +183,32 @@ def confirm_mask(img, roi, color, tol, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", help="녹화 파일 경로 (없으면 실제 게임 화면 사용)")
+    ap.add_argument("--image", help="스크린샷 파일 경로 (게임 해상도 그대로인 전체 화면)")
     ap.add_argument("--only", choices=["bobber", "bar", "gauge", "rod"], help="한 항목만 다시 설정")
     ap.add_argument("--pick-colors", action="store_true", help="바/물고기/게이지 색을 기본값 대신 직접 찍기")
     args = ap.parse_args()
 
     cfg = load_config()
-    src = VideoSource(args.video) if args.video else LiveSource(cfg["monitor"])
+    if args.image:
+        src = ImageSource(args.image)
+    elif args.video:
+        src = VideoSource(args.video)
+    else:
+        src = LiveSource(cfg["monitor"])
 
     def want(name):
-        return args.only in (None, name)
+        if args.only is None:
+            return name in ("bobber", "rod")
+        return args.only == name
 
     if want("bobber"):
-        img = src.pick("1. 찌가 물에 떠 있는 장면 (입질 전)")
+        img = src.pick("찌가 물에 떠 있는 장면 (입질 전)")
         cfg["bobber_roi"] = select_roi(img, "bobber area", precise=False)
         cfg["bobber_color"] = pick_color(img, cfg["bobber_roi"], "bobber color (red part)")
         confirm_mask(img, cfg["bobber_roi"], cfg["bobber_color"], cfg["tolerance"], "bobber check")
 
     if want("bar"):
-        img = src.pick("2. 미니게임 바 ( 물고기 ) 가 보이는 장면")
+        img = src.pick("미니게임 바 ( 물고기 ) 가 보이는 장면")
         cfg["bar_roi"] = select_roi(img, "bar area (bar line only)")
         if args.pick_colors:
             cfg["bar_color"] = pick_color(img, cfg["bar_roi"], "bracket color")
@@ -194,7 +217,7 @@ def main():
         confirm_mask(img, cfg["bar_roi"], cfg["fish_color"], cfg["tolerance"], "fish check")
 
     if want("gauge"):
-        img = src.pick("3. 원형 게이지가 '가득 찬' 장면")
+        img = src.pick("원형 게이지가 '가득 찬' 장면")
         cfg["gauge_roi"] = select_roi(img, "gauge area")
         if args.pick_colors:
             cfg["gauge_color"] = pick_color(img, cfg["gauge_roi"], "gauge filled color")
@@ -206,7 +229,7 @@ def main():
         cfg["gauge_full_pixels"] = max(n, 1)
 
     if want("rod"):
-        img = src.pick("4. 핫바 낚싯대 내구도 줄이 보이는 장면")
+        img = src.pick("핫바 낚싯대 내구도 줄이 보이는 장면")
         cfg["durability_roi"] = select_roi(img, "durability bar")
         x, y, w, h = cfg["durability_roi"]
         print(f"  -> 현재 내구도 색 hue={durability_hue(img[y:y + h, x:x + w])} (None이면 영역 다시)")

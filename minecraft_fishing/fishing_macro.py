@@ -15,7 +15,7 @@ import keyboard
 import numpy as np
 import pydirectinput
 
-from common import Screen, color_mask, durability_hue, load_config
+from common import Screen, color_mask, durability_hue, load_config, locate_bar, save_config
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -106,9 +106,29 @@ class Macro:
             return None
         return float(xs.mean())
 
+    def search_roi(self):
+        if self.cfg["bar_search_roi"]:
+            return self.cfg["bar_search_roi"]
+        w, h = self.screen.mon["width"], self.screen.mon["height"]
+        return [int(w * 0.2), int(h * 0.6), int(w * 0.6), int(h * 0.4)]
+
+    def find_bar(self):
+        """바 자동 탐색. 찾으면 config.json에 저장."""
+        sx, sy, _, _ = roi = self.search_roi()
+        found = locate_bar(self.screen.grab(roi), self.cfg)
+        if found is None:
+            return False
+        x, y, w, h = found
+        self.cfg["bar_roi"] = [sx + x, sy + y, w, h]
+        save_config(self.cfg)
+        print(f"\n[바 위치 자동 감지] {self.cfg['bar_roi']} -> config.json 저장")
+        return True
+
     def bar_state(self):
         """(잡는 구간 중심 x, 물고기 x). 못 찾으면 None."""
         c = self.cfg
+        if not c["bar_roi"] and not self.find_bar():
+            return None, None
         img = self.screen.grab(c["bar_roi"])
         fish_x = self.find_x(img, c["fish_color"])
 
@@ -270,6 +290,8 @@ def preview(cfg):
             n, y = m.bobber()
             info = f"찌 px={n:4d} y={'-' if y is None else f'{y:5.1f}'}"
             zone, fish = m.bar_state()
+            if not cfg["bar_roi"]:
+                info += " | 바: 미니게임 뜨면 자동 감지"
             info += f" | 구간={'-' if zone is None else f'{zone:5.0f}'} 물고기={'-' if fish is None else f'{fish:5.0f}'}"
             g = m.gauge_ratio()
             if g is not None:
@@ -291,7 +313,7 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
-    missing = [k for k in ("bobber_roi", "bobber_color", "bar_roi") if not cfg[k]]
+    missing = [k for k in ("bobber_roi", "bobber_color") if not cfg[k]]
     for k in ("gauge_roi", "durability_roi"):
         if not cfg[k]:
             print(f"경고: {k} 미설정 -> 해당 기능 꺼짐")

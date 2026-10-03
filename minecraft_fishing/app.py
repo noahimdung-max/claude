@@ -1130,6 +1130,11 @@ class App:
         spinbox(r, self.every_var, 1, 200, 1).pack(side="left")
         label(r, " 마리마다").pack(side="left")
         PixelButton(r, "다음에 바로 확인", self.check_now, "green").pack(side="right")
+        label(p.content, "읽을 낚싯대 칸  (자동 = 지금 들고 있는 칸)",
+              fg=MUTED).pack(anchor="w", pady=(8 * S, 2 * S))
+        self.eslot_cv = tk.Canvas(p.content, width=W, height=34 * S, bg=PANEL, highlightthickness=0, cursor="hand2")
+        self.eslot_cv.pack()
+        self.eslot_cv.bind("<Button-1>", self.click_eslot)
         self.every_var.trace_add("write", lambda *a: self.save_rod())
 
         # 인벤토리
@@ -1147,6 +1152,15 @@ class App:
         self.inv_cv.pack(pady=(8 * S, 0))
         self.inv_lbl = label(p.content, "아직 확인 안 함", fg=MUTED)
         self.inv_lbl.pack(anchor="w", pady=(4 * S, 0))
+        self.draw_rod_page()
+
+    def click_eslot(self, e):
+        k = int(e.x // (int(self.eslot_cv["width"]) / 10))
+        self.cfg["exact_slot"] = min(9, max(0, k))
+        save_config(self.cfg)
+        if self.macro:
+            self.macro.exact = None                 # 다른 칸이면 예전 값은 버림
+            self.macro.inv_due = True
         self.draw_rod_page()
 
     def click_slot(self, e):
@@ -1210,6 +1224,20 @@ class App:
             if on:
                 cv.create_text(x0 + (bw - 6 * S) / 2, H - 6 * S, font=FONTS["r"], fill=MUTED,
                                text="다 씀" if i in dep else ("사용 중" if i == cur else "대기"))
+        cv = self.eslot_cv                           # 정밀 내구도 칸 고르기: [자동] 1 ~ 9
+        cv.delete("all")
+        W, H = int(cv["width"]), int(cv["height"])
+        bw = W / 10
+        sel = 0 if self.cfg["rod_swap"] else self.cfg.get("exact_slot", 0)
+        for k in range(10):
+            x0 = k * bw
+            if k == sel:
+                bevel(cv, x0 + S, 0, x0 + bw - S, H, "#3f9a46")
+                shadow_text(cv, x0 + bw / 2, H / 2, "자동" if k == 0 else str(k), FONTS["b"])
+            else:
+                slot(cv, x0 + S, 0, x0 + bw - S, H, fill="#8b8b8b")
+                cv.create_text(x0 + bw / 2, H / 2, text="자동" if k == 0 else str(k), font=FONTS["r"],
+                               fill="#e8e8e8")
         self.swap_lbl.config(text=f"고른 칸: {', '.join(map(str, self.cfg['rod_slots'])) or '없음'}"
                                   + (f"  ·  지금 {cur}번 칸" if cur else ""))
         # 인벤 36칸

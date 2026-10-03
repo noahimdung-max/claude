@@ -36,6 +36,7 @@ DEFAULTS = {
     "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
     "durability_ignore": False,  # True 면 내구도 안 봄 (수선 낚싯대)
     "exact_durability": False,   # (실험) 인벤 툴팁(F3+H)으로 정확한 내구도 읽기
+    "exact_slot": 0,             # 정밀 내구도로 읽을 핫바 칸 (0 = 지금 들고 있는 칸, 1~9 = 그 칸)
     "inv_check_every": 10,       # 몇 마리마다 인벤 열어서 확인할지
     "inv_full_stop": False,      # 인벤 빈칸이 기준 이하면 멈춤
     "inv_min_empty": 0,          # 빈칸이 이 개수 이하면 '가득 참'

@@ -824,7 +824,7 @@ class Macro:
         if not self.hwnd:
             self.inv_note = "마크 창을 못 찾아서 인벤 확인 못 함"
             return
-        slot = self.hotbar_slot()
+        slot = self.rod_slot()
         self.state = "인벤 확인 중"
         self.set_shift(False)
         before = self.client_img()
@@ -890,10 +890,18 @@ class Macro:
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
 
+    def rod_slot(self):
+        """정밀 내구도로 읽을 칸. 설정에서 고른 칸, 아니면(자동·교체 켬) 지금 들고 있는 칸."""
+        fixed = self.cfg.get("exact_slot", 0)
+        if fixed and not self.cfg["rod_swap"]:
+            self.hotbar_slot()                       # GUI 배율 갱신용
+            return fixed
+        return self.hotbar_slot()
+
     def exact_now(self):
         """정밀 내구도 추정 (마지막 툴팁 값 - 그 뒤로 낚은 수). 다른 칸이면 None."""
         e = self.exact
-        if not e or e["slot"] != self.hotbar_slot():
+        if not e or e["slot"] != self.rod_slot():
             return None
         return max(0, e["cur"] - (self.run_caught - e["at"])), e["max"], self.run_caught == e["at"]
 

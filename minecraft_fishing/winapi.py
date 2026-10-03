@@ -367,3 +367,153 @@ def open_window_screen(hwnd):
     except Exception:
         pass
     return WindowScreen(hwnd), "PrintWindow"
+
+
+# ---------------------------------------------------------------- 시점 돌리기 (모루 자동 수리)
+# 마크는 '원시 입력'으로 마우스 실제 이동량을 그대로 시점 회전에 씀.
+# 그래서 사람이 물 -> 모루로 돌린 마우스 이동량을 원시 입력으로 기록해 두었다가
+# 같은 양을 SendInput 상대 이동으로 보내면 같은 각도로 돌고, 반대로 보내면 정확히 되돌아옴.
+if IS_WIN:
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                    ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class _KEYBDINPUT(ctypes.Structure):
+        _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class _INPUTU(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT)]
+
+    class _INPUT(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("u", _INPUTU)]
+
+    class _RAWINPUTHEADER(ctypes.Structure):
+        _fields_ = [("dwType", wintypes.DWORD), ("dwSize", wintypes.DWORD), ("hDevice", wintypes.HANDLE),
+                    ("wParam", wintypes.WPARAM)]
+
+    class _RAWMOUSE(ctypes.Structure):
+        _fields_ = [("usFlags", wintypes.USHORT), ("ulButtons", wintypes.ULONG), ("ulRawButtons", wintypes.ULONG),
+                    ("lLastX", wintypes.LONG), ("lLastY", wintypes.LONG), ("ulExtraInformation", wintypes.ULONG)]
+
+    class _RAWINPUT(ctypes.Structure):
+        _fields_ = [("header", _RAWINPUTHEADER), ("mouse", _RAWMOUSE)]
+
+    class _RAWINPUTDEVICE(ctypes.Structure):
+        _fields_ = [("usUsagePage", wintypes.USHORT), ("usUsage", wintypes.USHORT), ("dwFlags", wintypes.DWORD),
+                    ("hwndTarget", wintypes.HWND)]
+
+    _LRESULT = ctypes.c_ssize_t
+    _WNDPROC = ctypes.WINFUNCTYPE(_LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+    class _WNDCLASSW(ctypes.Structure):
+        _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", _WNDPROC), ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int), ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+
+    _sig(user32, "SendInput", wintypes.UINT, wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+    _sig(user32, "DefWindowProcW", _LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    _sig(user32, "RegisterClassW", wintypes.ATOM, ctypes.POINTER(_WNDCLASSW))
+    _sig(user32, "CreateWindowExW", wintypes.HWND, wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+         wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+         wintypes.HINSTANCE, wintypes.LPVOID)
+    _sig(user32, "DestroyWindow", wintypes.BOOL, wintypes.HWND)
+    _sig(user32, "RegisterRawInputDevices", wintypes.BOOL, ctypes.POINTER(_RAWINPUTDEVICE), wintypes.UINT,
+         wintypes.UINT)
+    _sig(user32, "GetRawInputData", wintypes.UINT, wintypes.HANDLE, wintypes.UINT, wintypes.LPVOID,
+         ctypes.POINTER(wintypes.UINT), wintypes.UINT)
+    _sig(user32, "GetMessageW", wintypes.BOOL, ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT,
+         wintypes.UINT)
+    _sig(user32, "TranslateMessage", wintypes.BOOL, ctypes.POINTER(wintypes.MSG))
+    _sig(user32, "DispatchMessageW", _LRESULT, ctypes.POINTER(wintypes.MSG))
+    _sig(user32, "PostThreadMessageW", wintypes.BOOL, wintypes.DWORD, wintypes.UINT, wintypes.WPARAM,
+         wintypes.LPARAM)
+    _sig(kernel32, "GetCurrentThreadId", wintypes.DWORD)
+    _sig(kernel32, "GetModuleHandleW", wintypes.HMODULE, wintypes.LPCWSTR)
+
+
+def send_mouse_move(dx, dy, step=24, pause=0.004):
+    """마우스를 상대적으로 (dx, dy) 만큼. 한 번에 크게 보내지 않고 잘게 나눠서 (마크가 빠짐없이 받게)."""
+    dx, dy = int(round(dx)), int(round(dy))
+    n = max(1, int(max(abs(dx), abs(dy)) / step + 0.999))
+    sent_x = sent_y = 0
+    for i in range(1, n + 1):
+        tx, ty = round(dx * i / n), round(dy * i / n)
+        inp = _INPUT(type=0)                         # INPUT_MOUSE
+        inp.u.mi = _MOUSEINPUT(tx - sent_x, ty - sent_y, 0, 0x0001, 0, 0)   # MOUSEEVENTF_MOVE (상대)
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+        sent_x, sent_y = tx, ty
+        time.sleep(pause)
+
+
+class RawMouseRecorder:
+    """원시 입력으로 마우스 실제 이동량(dx, dy)을 모음. 다른 창이 앞에 있어도 받음 (RIDEV_INPUTSINK)."""
+
+    def __init__(self):
+        import threading
+        self.dx = self.dy = 0
+        self.events = 0
+        self._tid = None
+        self._ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+        self._ready.wait(2)
+        return self
+
+    def stop(self):
+        if self._tid:
+            user32.PostThreadMessageW(self._tid, 0x0012, 0, 0)     # WM_QUIT
+        self._thread.join(2)
+        return self.dx, self.dy
+
+    def _proc(self, hwnd, msg, wp, lp):
+        if msg == 0x00FF:                                          # WM_INPUT
+            size = wintypes.UINT(0)
+            hdr = ctypes.sizeof(_RAWINPUTHEADER)
+            user32.GetRawInputData(lp, 0x10000003, None, ctypes.byref(size), hdr)   # RID_INPUT
+            if size.value:
+                buf = ctypes.create_string_buffer(size.value)
+                if user32.GetRawInputData(lp, 0x10000003, buf, ctypes.byref(size), hdr) == size.value:
+                    raw = ctypes.cast(buf, ctypes.POINTER(_RAWINPUT)).contents
+                    if raw.header.dwType == 0 and not (raw.mouse.usFlags & 1):    # 마우스, 상대 이동
+                        self.dx += raw.mouse.lLastX
+                        self.dy += raw.mouse.lLastY
+                        self.events += 1
+        return user32.DefWindowProcW(hwnd, msg, wp, lp)
+
+    def _run(self):
+        self._tid = kernel32.GetCurrentThreadId()
+        self._wndproc = _WNDPROC(self._proc)                       # 참조 유지 (GC 되면 튕김)
+        hinst = kernel32.GetModuleHandleW(None)
+        name = f"FishRawRec{id(self)}"
+        wc = _WNDCLASSW(0, self._wndproc, 0, 0, hinst, None, None, None, None, name)
+        user32.RegisterClassW(ctypes.byref(wc))
+        hwnd = user32.CreateWindowExW(0, name, name, 0, 0, 0, 0, 0, None, None, hinst, None)
+        dev = _RAWINPUTDEVICE(0x01, 0x02, 0x00000100, hwnd)       # 마우스, RIDEV_INPUTSINK
+        user32.RegisterRawInputDevices(ctypes.byref(dev), 1, ctypes.sizeof(_RAWINPUTDEVICE))
+        self._ready.set()
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        user32.DestroyWindow(hwnd)
+
+
+def read_mouse_sensitivity():
+    """마크 options.txt 의 마우스 감도·원시 입력 (기본 .minecraft). 못 읽으면 (None, None)."""
+    import os
+    path = os.path.join(os.environ.get("APPDATA", ""), ".minecraft", "options.txt")
+    sens = raw = None
+    try:
+        for line in open(path, encoding="utf-8", errors="ignore"):
+            k, _, v = line.strip().partition(":")
+            if k == "mouseSensitivity":
+                sens = float(v)
+            elif k == "rawMouseInput":
+                raw = v == "true"
+    except OSError:
+        pass
+    return sens, raw

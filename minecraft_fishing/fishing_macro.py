@@ -1176,12 +1176,13 @@ class Macro:
             return True
         finally:
             if face is not None and (opened or gui_overlay(face, self.view())):
+                # 닫기 전에 커서를 창 한가운데로 (창 열 때 마크가 둔 자리). 클릭하던 칸 위치에 두고 닫으면
+                # 마크가 마우스를 다시 잡을 때 그 거리만큼 시점이 돌아가서 매번 조금씩 더 밀림
+                x, y, w, h = winapi.client_rect(self.hwnd)
+                pydirectinput.moveTo(x + w // 2, y + h // 2)
+                time.sleep(0.1)
                 self.close_gui(face)                 # 열렸다고 판단하기 전에 정지돼도 닫음
             time.sleep(0.2)
-            winapi.send_mouse_move(1, 0)             # 창 닫힌 뒤 마크가 첫 움직임을 버리는 것 대비 (버려져도 1칸)
-            time.sleep(0.05)
-            winapi.send_mouse_move(-1, 0)
-            time.sleep(0.05)
             winapi.send_mouse_move(-turn[0], -turn[1])
             time.sleep(0.5)
             self.press(rod_key)                      # 낚싯대를 손에 (다시 낚시할 수 있게)

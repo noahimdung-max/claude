@@ -8,6 +8,7 @@ python fishing_macro.py --debug    # 실행 + 로그
 """
 import argparse
 import ctypes
+import math
 import threading
 import time
 import traceback
@@ -22,7 +23,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    screen_changed, gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index)
+                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -132,6 +133,7 @@ class Macro:
         self.run_caught = 0              # 이번 시작 후 낚은 수 (목표용)
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
         self.depleted = set()            # 이번 시작 후 다 쓴 낚싯대 칸 (1~9)
+        self.home_ref = None             # 첫 수리 전 낚시 화면 (돌아올 때 시점 보정 기준)
         self.exact = None                # 정밀 내구도 {"cur", "max", "slot", "at"(그때 낚은 수)}
         self.inv_due = True              # 다음 던지기 전에 인벤 확인
         self.inv_empty = None            # 마지막으로 본 인벤 빈칸 수
@@ -183,6 +185,7 @@ class Macro:
             self.stats["started"] = time.time()
             self.run_caught = 0
             self.depleted = set()
+            self.home_ref = None
             self.inv_off, self.inv_fails = False, 0
             self.inv_empty, self.inv_map = None, None
             self.err_retries = 0
@@ -1015,6 +1018,45 @@ class Macro:
             return turn_pixels(c["repair_yaw"], c.get("repair_pitch", 0), c["mouse_sens_pct"])
         return None
 
+    def align_view(self, ref, tries=4):
+        """화면을 ref(낚시하던 시점)와 비교해서 어긋난 만큼 마우스로 되돌림. 맞으면 True.
+        마우스를 왔다 갔다 하면 조금씩 밀릴 수 있어서 (수리할 때마다 쌓임) 매번 원래 화면에 맞춤."""
+        cur = self.client_img()
+        if ref is None or cur is None:
+            return False
+        h = cur.shape[0]
+        sens = self.cfg.get("mouse_sens_pct") or (winapi.read_mouse_sensitivity()[0] or 0.5) * 200
+        s = sens / 200
+        deg = 0.15 * ((s * 0.6 + 0.2) ** 3 * 8)                # 마우스 1칸 = deg 도
+        cpp = 1 / (view_focal_px(h) * math.radians(deg))      # 화면 1px = 마우스 몇 칸 (FOV 70 기준, 아래서 실측으로 고침)
+        tol = max(3.0, h / 300)
+        for i in range(tries):
+            r = view_shift(ref, cur)
+            if r is None:
+                return False
+            dx, dy, resp = r
+            if resp < 0.08:
+                self.out(f"[수리] 시점 비교가 안 돼 (화면이 너무 다름, 일치 {resp:.2f})")
+                return False
+            if abs(dx) <= tol and abs(dy) <= tol:
+                return True
+            mx, my = round(dx * cpp), round(dy * cpp)
+            if mx == 0 and my == 0:
+                return True
+            self.logger.write("REPAIR", f"시점 보정 {i + 1}: 화면 {dx:.0f},{dy:.0f}px -> 마우스 {mx},{my}")
+            winapi.send_mouse_move(mx, my)
+            time.sleep(0.35)
+            cur = self.client_img()
+            r2 = view_shift(ref, cur)
+            if r2 and r2[2] >= 0.08:
+                moved = math.hypot(dx - r2[0], dy - r2[1])
+                if moved > 3:                                    # 실제로 움직인 양으로 비율 고침
+                    k = math.hypot(mx, my) / moved
+                    if 0.3 * cpp < k < 3 * cpp:
+                        cpp = k
+        r = view_shift(ref, cur)
+        return bool(r and r[2] >= 0.08 and abs(r[0]) <= tol * 2 and abs(r[1]) <= tol * 2)
+
     def read_gold(self):
         roi = self.cfg.get("gold_roi")
         return read_number(self.screen.grab(roi)) if roi else None
@@ -1090,6 +1132,8 @@ class Macro:
         self.state = "모루로 수리하러 가는 중"
         self.set_shift(False)
         before = self.client_img()
+        if self.home_ref is None or self.home_ref.shape != before.shape:
+            self.home_ref = before                   # 이번 시작 후 첫 수리 때 낚시 시점 = 항상 여기로 돌아옴
         winapi.send_mouse_move(*turn)
         opened, face = False, None
         try:
@@ -1133,11 +1177,16 @@ class Macro:
         finally:
             if face is not None and (opened or gui_overlay(face, self.view())):
                 self.close_gui(face)                 # 열렸다고 판단하기 전에 정지돼도 닫음
+            time.sleep(0.2)
+            winapi.send_mouse_move(1, 0)             # 창 닫힌 뒤 마크가 첫 움직임을 버리는 것 대비 (버려져도 1칸)
+            time.sleep(0.05)
+            winapi.send_mouse_move(-1, 0)
+            time.sleep(0.05)
             winapi.send_mouse_move(-turn[0], -turn[1])
             time.sleep(0.5)
             self.press(rod_key)                      # 낚싯대를 손에 (다시 낚시할 수 있게)
             time.sleep(0.3)
-            if not screen_changed(before, self.client_img(), 14):
+            if self.align_view(self.home_ref):
                 self.out("[수리] 낚시 자리로 돌아옴")
             elif self.running:
                 self.out("[수리] 원래 시점과 화면이 달라 보여 (확인해줘)")

@@ -685,6 +685,32 @@ def turn_pixels(yaw_deg, pitch_deg, sens_pct):
     return round(yaw_deg / deg), round(pitch_deg / deg)
 
 
+def view_shift(ref, cur, width=320):
+    """두 게임 화면에서 풍경이 몇 px 밀렸는지 (dx, dy, 신뢰도). 손·핫바·자막이 없는 가운데 위쪽만 봄.
+    시점이 오른쪽으로 더 돌아가 있으면 풍경이 왼쪽으로 밀려서 dx < 0."""
+    h, w = ref.shape[:2]
+    if cur.shape[:2] != (h, w):
+        return None
+    y0, y1, x0, x1 = int(h * 0.08), int(h * 0.62), int(w * 0.12), int(w * 0.88)
+    k = min(1.0, width / (x1 - x0))
+
+    def prep(img):
+        g = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY).astype(np.float32)
+        g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+        return g - g.mean()
+
+    a, b = prep(ref), prep(cur)
+    win = cv2.createHanningWindow((a.shape[1], a.shape[0]), cv2.CV_32F)
+    (dx, dy), resp = cv2.phaseCorrelate(a, b, win)
+    return dx / k, dy / k, resp
+
+
+def view_focal_px(height, fov=70):
+    """마크 시야(FOV, 세로)로 화면 1도당 픽셀 계산용 초점거리(px)."""
+    import math
+    return (height / 2) / math.tan(math.radians(fov) / 2)
+
+
 def detect_gui_scale(img):
     """화면에서 마크 GUI 배율 (핫바 선택 칸 테두리 = 24 GUI 픽셀). 못 찾으면 None."""
     h, w = img.shape[:2]

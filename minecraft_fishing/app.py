@@ -37,27 +37,28 @@ HERE = Path(__file__).parent
 
 # ---------------------------------------------------------------- 색상
 THEMES = {
+    # 마크 인벤토리 GUI 느낌: 회색 판 + 입체 테두리(위·왼쪽 밝게, 아래·오른쪽 어둡게), 각진 모서리
     "light": dict(
-        SKY="#fff4ea", PANEL="#ffffff", LINE="#f1dccb", SOFT="#fdebdd", ACCENT="#dc4655",
-        TXT="#3a2b2b", MUTED="#a08d82", OK="#2e9e6b", BAD="#dc4655", SIDEBAR="#ffe7d6", NAV_SEL="#fbd5d2",
-        GUIDE_BG="#fde3e3", BAR_BG="#e7f3f8",
+        SKY="#2b2b2b", PANEL="#c6c6c6", LINE="#8b8b8b", SOFT="#b4b4b4", ACCENT="#2f7d32",
+        TXT="#2f2f2f", MUTED="#555555", OK="#2e7d32", BAD="#b3261e", SIDEBAR="#1f1f1f", NAV_SEL="#c6c6c6",
+        GUIDE_BG="#dcdcdc", BAR_BG="#1d2b4f", BEV_HI="#ffffff", BEV_LO="#555555", NAV_TXT="#d6d6d6",
         HEADER=["#7cc6ef", "#8ccdf1", "#9cd5f3", "#acdcf5"], CLOUD="#ffffff",
         BTN={  # 면, 글자, 테두리, 마우스 올렸을 때 면
-            "gray": ("#fdebdd", "#3a2b2b", "#f1dccb", "#fbdcc8"),
-            "green": ("#dc4655", "#ffffff", "#dc4655", "#e55d6a"),
-            "red": ("#3a2b2b", "#ffffff", "#3a2b2b", "#56403f"),
-            "mint": ("#d4f1ea", "#1f6f5c", "#d4f1ea", "#c3eae0"),
+            "gray": ("#717171", "#ffffff", "#000000", "#8a8fb0"),
+            "green": ("#3f9a46", "#ffffff", "#000000", "#4cb554"),
+            "red": ("#a8322a", "#ffffff", "#000000", "#c03f35"),
+            "mint": ("#3f6fa8", "#ffffff", "#000000", "#4d82c2"),
         }),
     "dark": dict(
-        SKY="#1e191b", PANEL="#2a2326", LINE="#3e3236", SOFT="#3a2f32", ACCENT="#ef5d6b",
-        TXT="#f3e9e4", MUTED="#a8978f", OK="#4cc38a", BAD="#ef5d6b", SIDEBAR="#251f22", NAV_SEL="#4a2c31",
-        GUIDE_BG="#4a2c31", BAR_BG="#1f2d36",
+        SKY="#121212", PANEL="#383838", LINE="#262626", SOFT="#4a4a4a", ACCENT="#7ddc6f",
+        TXT="#eeeeee", MUTED="#ababab", OK="#7ddc6f", BAD="#ff7b6b", SIDEBAR="#0c0c0c", NAV_SEL="#383838",
+        GUIDE_BG="#2a2a2a", BAR_BG="#101a30", BEV_HI="#5c5c5c", BEV_LO="#1a1a1a", NAV_TXT="#cfcfcf",
         HEADER=["#141c36", "#18213f", "#1d2748", "#222d52"], CLOUD="#3b4466",
         BTN={
-            "gray": ("#3a2f32", "#f3e9e4", "#4a3d41", "#46393d"),
-            "green": ("#ef5d6b", "#ffffff", "#ef5d6b", "#f4747f"),
-            "red": ("#f3e9e4", "#1e191b", "#f3e9e4", "#ffffff"),
-            "mint": ("#1f3d36", "#7fe0c4", "#1f3d36", "#26493f"),
+            "gray": ("#555555", "#ffffff", "#000000", "#6a6f90"),
+            "green": ("#3a8a41", "#ffffff", "#000000", "#46a04e"),
+            "red": ("#9c2e27", "#ffffff", "#000000", "#b53a31"),
+            "mint": ("#365f91", "#ffffff", "#000000", "#4373ab"),
         }),
 }
 
@@ -68,6 +69,7 @@ def apply_theme(name):
 
 
 SKY = PANEL = LINE = SOFT = ACCENT = TXT = MUTED = OK = BAD = SIDEBAR = NAV_SEL = GUIDE_BG = BAR_BG = None
+BEV_HI = BEV_LO = NAV_TXT = None
 CLOUD = SLOT = HEADER = BTN = None
 apply_theme("light")
 
@@ -156,6 +158,7 @@ SPRITES = {
         ".kkkkkkk.",
     ], {"k": "#3a1d1d", "R": "#c0392b", "w": "#ffd54f", "W": "#f5f5f5"}),
 }
+TIP_BG = "#100010"
 FISH_HEX = {"빨강": "#e53935", "주황": "#fb8c00", "노랑": "#fdd835", "초록": "#43a047", "하늘": "#29b6f6",
             "파랑": "#1e88e5", "보라": "#8e24aa", "분홍": "#ec407a"}
 CHECK = [
@@ -207,17 +210,34 @@ def sprite(name, scale):
 
 
 def round_rect(cv, x0, y0, x1, y1, r, **kw):
-    """둥근 사각형."""
-    r = max(0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
-    pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1,
-           x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
-    return cv.create_polygon(pts, smooth=True, splinesteps=24, **kw)
+    """마크 GUI 는 각진 모서리 -> 그냥 사각형 (예전 둥근 사각형 자리)."""
+    kw.pop("smooth", None)
+    return cv.create_rectangle(x0, y0, x1, y1, **kw)
+
+
+def bevel(cv, x0, y0, x1, y1, face, hi=None, lo=None, border="#000000", t=None, tag=""):
+    """마크 GUI 입체 칸: 검은 테두리 + 위·왼쪽 밝은 선 + 아래·오른쪽 어두운 선. hi/lo 를 바꾸면 들어간 칸."""
+    hi, lo, t = hi or BEV_HI, lo or BEV_LO, t or 2 * S
+    cv.create_rectangle(x0, y0, x1, y1, fill=border, outline="", tags=tag)
+    b = max(1, S)
+    cv.create_rectangle(x0 + b, y0 + b, x1 - b, y1 - b, fill=face, outline="", tags=tag)
+    cv.create_rectangle(x0 + b, y0 + b, x1 - b, y0 + b + t, fill=hi, outline="", tags=tag)
+    cv.create_rectangle(x0 + b, y0 + b, x0 + b + t, y1 - b, fill=hi, outline="", tags=tag)
+    cv.create_rectangle(x0 + b, y1 - b - t, x1 - b, y1 - b, fill=lo, outline="", tags=tag)
+    cv.create_rectangle(x1 - b - t, y0 + b, x1 - b, y1 - b, fill=lo, outline="", tags=tag)
 
 
 def slot(cv, x0, y0, x1, y1, fill=None, tag=""):
-    """살구색 둥근 칸 (트랙/입력칸)."""
-    fill = fill or SOFT
-    round_rect(cv, x0, y0, x1, y1, min(12 * S, (y1 - y0) / 2), fill=fill, outline="", tags=tag)
+    """들어간 칸 (아이템 칸·트랙): 위·왼쪽 어둡고 아래·오른쪽 밝음."""
+    fill = fill or LINE
+    bevel(cv, x0, y0, x1, y1, fill, hi="#373737", lo="#ffffff" if PANEL == "#c6c6c6" else "#5c5c5c",
+          border=fill, t=max(1, S), tag=tag)
+
+
+def shadow_text(cv, x, y, text, font, fill="#ffffff", **kw):
+    """마크 글자처럼 오른쪽 아래 그림자."""
+    cv.create_text(x + max(1, S), y + max(1, S), text=text, font=font, fill="#3f3f3f", **kw)
+    return cv.create_text(x, y, text=text, font=font, fill=fill, **kw)
 
 
 # ---------------------------------------------------------------- 위젯
@@ -259,10 +279,15 @@ class PixelButton(tk.Canvas):
         w = self.winfo_width() if self.winfo_width() > 2 else int(self["width"])
         h = int(self["height"])
         face, fg, line, hov = BTN[self.variant]
+        if self.pressed:
+            bevel(self, 0, 0, w, h, face, hi="#3a3a3a", lo="#9a9a9a")
+        else:
+            bevel(self, 0, 0, w, h, hov if self.hover else face, hi="#ffffff" if not self.hover else "#d7dcff",
+                  lo="#2e2e2e")
+            if self.hover:
+                self.create_rectangle(0, 0, w - 1, h - 1, outline="#ffffff", width=max(1, S))
         dy = S if self.pressed else 0
-        round_rect(self, S, S + dy, w - S, h - S, h / 2, fill=hov if self.hover else face,
-                   outline=line, width=max(1, S))
-        self.create_text(w / 2, h / 2 + dy, text=self.text, font=self.font, fill=fg)
+        shadow_text(self, w / 2, h / 2 + dy, self.text, self.font, fg)
 
 
 class PixelCheck(tk.Frame):
@@ -300,16 +325,15 @@ class PixelCheck(tk.Frame):
         on = self.checked()
         if self.rv is not None:
             n = 16 * S
-            c.create_oval(S, S, n - S, n - S, outline=ACCENT if on else LINE, width=2 * S, fill=PANEL)
+            slot(c, 0, 0, n, n, fill="#8b8b8b")
             if on:
-                c.create_oval(5 * S, 5 * S, n - 5 * S, n - 5 * S, fill=ACCENT, outline="")
+                c.create_rectangle(4 * S, 4 * S, n - 4 * S, n - 4 * S, fill="#55ff55", outline="#1f5f1f")
             return
         w, h = 34 * S, 18 * S
-        round_rect(c, S, S, w - S, h - S, h / 2, fill=ACCENT if on else PANEL,
-                   outline=ACCENT if on else TXT, width=max(1, S) + (0 if on else 1))
-        k = h - 8 * S
-        x = w - 4 * S - k if on else 4 * S
-        c.create_oval(x, 4 * S, x + k, 4 * S + k, fill=PANEL if on else TXT, outline="")
+        slot(c, 0, 0, w, h, fill="#3f9a46" if on else "#555555")
+        k = h - 4 * S
+        x = w - 2 * S - k if on else 2 * S
+        bevel(c, x, 2 * S, x + k, 2 * S + k, "#c6c6c6", hi="#ffffff", lo="#555555", t=max(1, S))
 
 
 class Panel(tk.Frame):
@@ -336,7 +360,8 @@ class Panel(tk.Frame):
         h = self.body.winfo_reqheight() + 2 * self.pad - 4 * S
         self.cv.configure(height=h)
         self.cv.delete("bev")
-        round_rect(self.cv, S, S, PANEL_W - S, h - S, 18 * S, fill=PANEL, outline=LINE, width=2 * S, tags="bev")
+        bevel(self.cv, 0, 0, PANEL_W, h, PANEL, t=3 * S, tag="bev")
+        self.cv.tag_lower("bev")
 
 
 def label(parent, text="", font="r", fg=None, **kw):
@@ -361,9 +386,12 @@ class NavItem(tk.Canvas):
         self.delete("all")
         w, h = int(self["width"]), int(self["height"])
         if self.selected:
-            round_rect(self, 2 * S, 2 * S, w - 2 * S, h - 2 * S, 14 * S, fill=NAV_SEL, outline="")
+            bevel(self, 2 * S, 2 * S, w - 2 * S, h - 2 * S, NAV_SEL)
+        else:
+            slot(self, 4 * S, 4 * S, w - 4 * S, h - 4 * S, fill="#2c2c2c" if PANEL == "#c6c6c6" else "#1e1e1e")
         self.create_image(w / 2, h / 2 - 8 * S, image=self.icon)
-        self.create_text(w / 2, h - 13 * S, text=self.text, font=FONTS["r"], fill=ACCENT if self.selected else TXT)
+        self.create_text(w / 2, h - 13 * S, text=self.text, font=FONTS["r"] if not self.selected else FONTS["b"],
+                         fill=TXT if self.selected else NAV_TXT)
 
 
 class PixelStepper(tk.Frame):
@@ -376,8 +404,9 @@ class PixelStepper(tk.Frame):
         self.dec = 0 if float(step).is_integer() else len(str(step).split(".")[1])
         n = 24 * S
         PixelButton(self, "−", lambda: self.bump(-1), width=n, height=n, bg=bg).pack(side="left")
-        tk.Entry(self, textvariable=var, width=width, font=FONTS["b"], justify="center", bg=SOFT,
-                 fg=TXT, insertbackground=TXT, relief="flat", bd=0, highlightthickness=0).pack(
+        tk.Entry(self, textvariable=var, width=width, font=FONTS["b"], justify="center", bg="#000000",
+                 fg="#ffffff", insertbackground="#ffffff", relief="flat", bd=0, highlightthickness=1,
+                 highlightbackground="#a0a0a0", highlightcolor="#ffffff").pack(
             side="left", padx=4 * S, ipady=3 * S)
         PixelButton(self, "+", lambda: self.bump(1), width=n, height=n, bg=bg).pack(side="left")
 
@@ -777,8 +806,12 @@ class App:
         self.note_panel = Panel(self.pages["fish"], "알림", self.icons["chat"])
         self.note_panel.pack(pady=(8 * S, 0))
         self.note_lbls = []
+        tip = tk.Frame(self.note_panel.content, bg=TIP_BG, highlightthickness=2 * S, highlightbackground="#2a0a5e",
+                       padx=8 * S, pady=6 * S)      # 마크 아이템 툴팁 모양
+        tip.pack(fill="x")
         for _ in range(4):
-            lb = label(self.note_panel.content, "", anchor="w", justify="left", wraplength=PANEL_W - 30 * S)
+            lb = tk.Label(tip, text="", font=FONTS["r"], bg=TIP_BG, fg="#aaaaaa", anchor="w", justify="left",
+                          wraplength=PANEL_W - 50 * S)
             lb.pack(fill="x", anchor="w")
             self.note_lbls.append(lb)
 
@@ -964,13 +997,13 @@ class App:
         self.render_notes()
 
     def render_notes(self):
-        colors = {"good": OK, "warn": "#c48a00" if self.theme == "light" else "#ffd866", "bad": BAD}
+        colors = {"good": "#55ff55", "warn": "#ffff55", "bad": "#ff5555"}
         for i, lb in enumerate(self.note_lbls):
             if i >= len(self.notes):
                 lb.config(text="")
                 continue
             t, text, tag = self.notes[i]
-            lb.config(text=f"{t}  {text}", fg=colors.get(tag, TXT) if i == 0 else MUTED)
+            lb.config(text=f"{t}  {text}", fg=colors.get(tag, "#ffffff") if i == 0 else "#aaaaaa")
 
     def tick(self):
         """화면 갱신. 그리다 오류가 나도 갱신은 계속 (멈추면 버튼/상태가 안 바뀌어 '정지 안 됨'처럼 보임)."""
@@ -1160,6 +1193,20 @@ class App:
                        outline=TXT if i == cur else "", width=2 * S)
             cv.create_text(x0 + (bw - 6 * S) / 2, (H - 12 * S) / 2, text=str(i), font=FONTS["m"],
                            fill="#ffffff" if on and i not in dep else MUTED)
+            # 칸 아래 내구도 줄 (지금 칸 = 읽은 값, 다 쓴 칸 = 빨강)
+            frac = None
+            if i == cur and m and m.stats.get("dura"):
+                val, kind = m.stats["dura"]
+                mx = m.stats.get("dura_max") or self.cfg["durability_max"]
+                frac = 0.05 if kind == "low" else min(1, val / max(1, mx))
+            elif on and i in dep:
+                frac = 0.05
+            if frac is not None:
+                bx0, bx1, by = x0 + 5 * S, x0 + bw - 11 * S, H - 22 * S
+                cv.create_rectangle(bx0, by, bx1, by + 3 * S, fill="#000000", outline="")
+                r_, g_, b_ = colorsys.hsv_to_rgb(frac / 3, 1, 1)
+                cv.create_rectangle(bx0, by, bx0 + (bx1 - bx0) * frac, by + 2 * S, outline="",
+                                    fill="#%02x%02x%02x" % (int(r_ * 255), int(g_ * 255), int(b_ * 255)))
             if on:
                 cv.create_text(x0 + (bw - 6 * S) / 2, H - 6 * S, font=FONTS["r"], fill=MUTED,
                                text="다 씀" if i in dep else ("사용 중" if i == cur else "대기"))
@@ -1312,15 +1359,27 @@ class App:
         cur = next((i for i, (_, keys) in enumerate(self.STEPS) if any(k in m.state for k in keys)), None)
         if not m.running:
             cur = None
+        # 마크 경험치 바처럼: 위에 단계 글자, 아래 초록 막대 (지금 단계까지 참), 오른쪽에 낚은 수 = 레벨
         n = len(self.STEPS)
-        xs = [W * (i + 0.5) / n for i in range(n)]
-        cv.create_line(xs[0], 11 * S, xs[-1], 11 * S, fill=LINE, width=3 * S)
+        x = 0
         for i, (name, _) in enumerate(self.STEPS):
             on = i == cur
-            r = 7 * S if on else 5 * S
-            cv.create_oval(xs[i] - r, 11 * S - r, xs[i] + r, 11 * S + r, fill=ACCENT if on else SOFT,
-                           outline=ACCENT if on else LINE, width=2 * S)
-            cv.create_text(xs[i], 30 * S, text=name, font=FONTS["b" if on else "r"], fill=ACCENT if on else MUTED)
+            t = cv.create_text(x, 9 * S, text=name, anchor="w", font=FONTS["b" if on else "r"],
+                               fill=TXT if on else MUTED)
+            x = cv.bbox(t)[2] + 4 * S
+            if i < n - 1:
+                t = cv.create_text(x, 9 * S, text="›", anchor="w", font=FONTS["r"], fill=MUTED)
+                x = cv.bbox(t)[2] + 4 * S
+        shadow_text(cv, W - 2 * S, 9 * S, f"Lv. {m.run_caught}", FONTS["b"], "#80ff20", anchor="e")
+        y0, y1 = 22 * S, 32 * S
+        cv.create_rectangle(0, y0, W, y1, fill="#000000", outline="")
+        if cur is not None:
+            fx = (W - 2 * S) * (cur + 1) / n
+            cv.create_rectangle(S, y0 + S, S + fx, y1 - S, fill="#80ff20", outline="")
+            cv.create_rectangle(S, y1 - 4 * S, S + fx, y1 - S, fill="#3f9f00", outline="")
+        for i in range(1, 18):                       # 경험치 바 눈금
+            gx = W * i / 18
+            cv.create_line(gx, y0 + S, gx, y1 - S, fill="#000000", width=max(1, S))
 
     def draw_dashboard(self, m):
         s = m.stats
@@ -1340,22 +1399,39 @@ class App:
         tw = (W - gap * 3) / 4
         for i, (name, val) in enumerate(tiles):
             x0 = i * (tw + gap)
-            round_rect(cv, x0, 0, x0 + tw, H, 12 * S, fill=SOFT, outline="")
-            cv.create_text(x0 + tw / 2, 18 * S, text=name, font=FONTS["r"], fill=MUTED)
-            cv.create_text(x0 + tw / 2, 42 * S, text=val, font=FONTS["m"], fill=ACCENT if i == 0 else TXT)
+            slot(cv, x0, 0, x0 + tw, H, fill="#8b8b8b")
+            cv.create_text(x0 + 8 * S, 15 * S, text=name, anchor="w", font=FONTS["r"], fill="#e8e8e8")
+            shadow_text(cv, x0 + tw - 8 * S, 42 * S, val, FONTS["m"], "#80ff20" if i == 0 else "#ffffff",
+                        anchor="e")
         # 물고기 색 칩
         key = tuple(sorted(s["colors"].items())) + (self.cfg.get("total_caught", 0), id(self.chips))
         if key != getattr(self, "_chip_key", None):
             self._chip_key = key
             for w in self.chips.winfo_children():
                 w.destroy()
-            label(self.chips, f"지금까지 총 {self.cfg.get('total_caught', 0)}마리", "b").pack(side="left")
-            hexes = FISH_HEX
-            for name, cnt in sorted(s["colors"].items(), key=lambda kv: -kv[1]):
-                chip = tk.Canvas(self.chips, width=12 * S, height=12 * S, bg=PANEL, highlightthickness=0)
-                chip.create_oval(1, 1, 12 * S - 1, 12 * S - 1, fill=hexes.get(name, MUTED), outline="")
-                chip.pack(side="left", padx=(10 * S, 3 * S))
-                label(self.chips, f"{name} {cnt}").pack(side="left")
+            # 이번에 낚은 물고기 = 아이템 칸 (색별 물고기 그림 + 개수)
+            n = 7
+            W = PANEL_W - 30 * S
+            cs = W / n
+            cv = tk.Canvas(self.chips, width=W, height=int(cs) + 18 * S, bg=PANEL, highlightthickness=0)
+            cv.pack()
+            items = sorted(s["colors"].items(), key=lambda kv: -kv[1])
+            for k in range(n):
+                x0 = k * cs
+                slot(cv, x0, 0, x0 + cs - S, cs - S, fill="#8b8b8b")
+                if k < len(items):
+                    name, cnt = items[k]
+                    col = FISH_HEX.get(name, "#9e9e9e")
+                    cx, cy = x0 + cs / 2, cs / 2 - 2 * S
+                    cv.create_rectangle(cx - 11 * S, cy - 5 * S, cx + 6 * S, cy + 5 * S, fill=col, outline="#202020",
+                                        width=max(1, S))
+                    cv.create_polygon(cx + 6 * S, cy, cx + 12 * S, cy - 6 * S, cx + 12 * S, cy + 6 * S, fill=col,
+                                      outline="#202020", width=max(1, S))
+                    cv.create_rectangle(cx - 8 * S, cy - 2 * S, cx - 6 * S, cy, fill="#202020", outline="")
+                    shadow_text(cv, x0 + cs - 4 * S, cs - 7 * S, str(cnt), FONTS["b"], anchor="e")
+                    cv.create_text(x0 + cs / 2, cs + 8 * S, text=name, font=FONTS["r"], fill=MUTED)
+            cv.create_text(W, cs + 8 * S, text=f"총 {self.cfg.get('total_caught', 0)}마리", anchor="e",
+                           font=FONTS["b"], fill=TXT)
         # 최근 1시간, 5분 단위 막대
         cv = self.spark_cv
         cv.delete("all")

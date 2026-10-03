@@ -651,7 +651,7 @@ class Macro:
         self.record(games=1)
         color = None
         if self.last_view is not None and fish is not None:
-            color = fish_color_name(split_view(self.last_view, view_roi(c["bar_roi"])[1])[0], fish)
+            color = fish_color_name(split_view(self.last_view, view_roi(c["bar_roi"])[1])[1])
         self.out("미니게임 시작" + (f" ({color} 물고기)" if color else ""))
         self.logger.snap(self.last_view, "미니게임_시작")
 

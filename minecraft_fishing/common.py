@@ -250,21 +250,27 @@ def fish_blob_x(bar, cfg):
     return best
 
 
-FISH_COLORS = [(15, "빨강"), (40, "주황"), (70, "노랑"), (165, "초록"), (200, "하늘"), (260, "파랑"),
+FISH_COLORS = [(15, "빨강"), (40, "주황"), (70, "노랑"), (165, "초록"), (185, "하늘"), (260, "파랑"),
                (300, "보라"), (345, "분홍"), (360, "빨강")]
 
 
-def fish_color_name(bar, x):
-    """물고기(가운데 x) 주변의 선명한 색 -> '초록', '노랑' 같은 이름. 낚은 물고기 종류 통계용."""
-    h = bar.shape[0]
-    x0, x1 = max(0, int(x) - h), min(bar.shape[1], int(x) + h)
-    crop = bar[:, x0:x1]
-    m = fishlike_mask(crop)
-    if m.sum() < 3:
+def fish_color_name(above):
+    """바 위 가운데 아이콘(물고기 등급 표시) 색 -> '초록', '주황', '파랑' 같은 이름.
+    바 위를 지나가는 물고기 그림은 항상 같은 색이라 아이콘 색으로 구분함."""
+    if above is None or above.size == 0:
         return None
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    hue = float(np.median(hsv[..., 0][m])) * 2
-    return next(name for lim, name in FISH_COLORS if hue <= lim)
+    hsv = cv2.cvtColor(above, cv2.COLOR_BGR2HSV)
+    m = (hsv[..., 1] >= 160) & (hsv[..., 2] >= 80)        # 아이콘만 (뒤 배경은 채도·밝기가 낮음)
+    if m.sum() < 12:
+        return None
+    hue = hsv[..., 0][m].astype(np.float32) * 2
+    # 아이콘 안 작은 그림(빨간 낚싯대 등)보다 바탕색이 많음 -> 가장 많은 색 구간
+    names = [next(n for lim, n in FISH_COLORS if h <= lim) for h in hue]
+    vals, cnt = np.unique(names, return_counts=True)
+    k = int(np.argmax(cnt))
+    if cnt[k] < 0.8 * (above.shape[0] / 3) ** 2:        # 아이콘이 없으면(색 조각만) 이름 안 붙임
+        return None
+    return str(vals[k])
 
 
 def gauge_present(above, bar_h):

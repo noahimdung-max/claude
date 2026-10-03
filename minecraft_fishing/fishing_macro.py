@@ -931,17 +931,53 @@ class Macro:
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
 
+    def view(self):
+        return self.client_img() if self.hwnd else self.screen.full()
+
+    def recover(self):
+        """연속으로 못 낚을 때: 마크에 창(일시정지 메뉴·채팅 등)이 떠 있으면 닫음.
+        잘 낚였을 때 화면보다 확실히 어두울 때만 (밤이 되는 정도로는 안 누름)."""
+        self.set_shift(False)
+        ref = getattr(self, "game_ref", None)
+        if ref is None:
+            return
+        try:
+            now = self.view()
+        except Exception:
+            return
+        if gui_overlay(ref, now, ratio=0.55):
+            self.out("[복구] 마크에 창(메뉴·채팅 등)이 떠 있는 것 같아서 닫았어")
+            self.close_gui(ref)
+
+    def watch_fps(self):
+        """다른 창 모드: 마크 화면이 초당 몇 번 새로 그려지는지. 너무 낮으면 입질·미니게임을 놓치니 알림."""
+        scr = self.screen
+        if not self.bg_mode or not hasattr(scr, "frames"):
+            return
+        now = time.perf_counter()
+        last = getattr(self, "_fps_mark", None)
+        self._fps_mark = (now, scr.frames)
+        if not last or now - last[0] < 2:
+            return
+        fps = (scr.frames - last[1]) / (now - last[0])
+        self.stats["fps"] = fps
+        if fps < 12 and now - getattr(self, "_fps_warned", -1e9) > 300:
+            self._fps_warned = now
+            self.out(f"[알림] 마크가 뒤에 있을 때 초당 {fps:.0f}번만 그려져서 입질·미니게임을 놓칠 수 있어. "
+                     "마크 비디오 설정 '비활성 FPS 제한'을 '최소화'로, Dynamic FPS 같은 모드·클라이언트의 "
+                     "'포커스 없을 때 FPS' 를 올려줘 (가이드 탭 참고)")
+
     def close_gui(self, game_img):
         """연 창 닫기: ESC 한 번. 그 뒤에도 화면이 어두우면(창이 남았거나 일시정지 메뉴) 한 번 더.
         게임 화면이 이미 보이면 절대 더 안 누름 (그러면 일시정지 메뉴가 뜸)."""
         self.press("esc")
         for _ in range(2):
             time.sleep(0.4)
-            if not gui_overlay(game_img, self.client_img()):
+            if not gui_overlay(game_img, self.view()):
                 return True
             self.press("esc")
         time.sleep(0.4)
-        if gui_overlay(game_img, self.client_img()):
+        if gui_overlay(game_img, self.view()):
             self.out("[알림] 마크 창(메뉴)이 안 닫혀 - 확인해줘")
             return False
         return True
@@ -1176,10 +1212,18 @@ class Macro:
             self.right_click()           # 회수
         if self.stats["caught"] == caught_before:
             self.fails += 1
+            if self.fails >= 2:
+                self.recover()
             if self.fails >= self.cfg["max_fails"]:
-                self.stop_with(f"{self.fails}번 연속으로 못 낚았어 -> 정지 (물 쪽을 보고 있는지, 설정 확인)")
+                fps = self.stats.get("fps")
+                hint = (f" / 마크 화면이 초당 {fps:.0f}번만 그려짐: 뒤에 있을 때 FPS 제한(Dynamic FPS 등) 확인"
+                        if self.bg_mode and fps is not None and fps < 12 else "")
+                self.stop_with(f"{self.fails}번 연속으로 못 낚았어 -> 정지 (물 쪽을 보고 있는지, 설정 확인){hint}")
+        else:
+            self.game_ref = self.view()          # 잘 낚인 순간의 게임 화면 (복구 때 비교용)
         self.state = "다시 던지기 대기"
         self.sleep(self.cfg["recast_delay_sec"])
+        self.watch_fps()
 
     def run(self):
         while not self.quit:

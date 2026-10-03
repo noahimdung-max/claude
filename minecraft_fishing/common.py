@@ -530,13 +530,13 @@ def _edge_brightness(img):
     return float(np.concatenate([g[:, :bw].ravel(), g[:, -bw:].ravel(), g[:bh].ravel(), g[-bh:].ravel()]).mean())
 
 
-def gui_overlay(before, after):
+def gui_overlay(before, after, ratio=0.8):
     """마크에서 창(인벤·모루·일시정지 메뉴 등)이 떠 있는지: 창이 열리면 뒤 게임 화면이 어두워짐.
     찌·물결 움직임처럼 화면만 조금 바뀐 건 '열림'으로 안 봄."""
     if before is None or after is None or before.shape != after.shape:
         return False
     b0, b1 = _edge_brightness(before), _edge_brightness(after)
-    return b0 > 8 and b1 < b0 * 0.8 and screen_changed(before, after, 8)
+    return b0 > 8 and b1 < b0 * ratio and screen_changed(before, after, 8)
 
 
 def save_debug_image(img, name):

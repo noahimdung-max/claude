@@ -22,7 +22,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    screen_changed, save_debug_image, read_number, turn_pixels, hotbar_index)
+                    screen_changed, gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -875,7 +875,7 @@ class Macro:
                     opened = verified = True
                     break
             if not verified:
-                opened = screen_changed(before, img)
+                opened = gui_overlay(before, img)
                 if not opened:
                     self.inv_note = "인벤이 안 열림 (E 키가 인벤이 맞는지 확인)"
                     return
@@ -919,10 +919,25 @@ class Macro:
             self.inv_note = " / ".join(note)
         finally:
             if opened:
-                self.press("esc")
-            time.sleep(0.5)
+                self.close_gui(before)
+            time.sleep(0.3)
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
+
+    def close_gui(self, game_img):
+        """연 창 닫기: ESC 한 번. 그 뒤에도 화면이 어두우면(창이 남았거나 일시정지 메뉴) 한 번 더.
+        게임 화면이 이미 보이면 절대 더 안 누름 (그러면 일시정지 메뉴가 뜸)."""
+        self.press("esc")
+        for _ in range(2):
+            time.sleep(0.4)
+            if not gui_overlay(game_img, self.client_img()):
+                return True
+            self.press("esc")
+        time.sleep(0.4)
+        if gui_overlay(game_img, self.client_img()):
+            self.out("[알림] 마크 창(메뉴)이 안 닫혀 - 확인해줘")
+            return False
+        return True
 
     def rod_slot(self):
         """정밀 내구도로 읽을 칸. 설정에서 고른 칸, 아니면(자동·교체 켬) 지금 들고 있는 칸."""
@@ -1042,7 +1057,7 @@ class Macro:
             end = time.perf_counter() + 2.0
             while time.perf_counter() < end:
                 self.sleep(0.1)
-                if screen_changed(face, self.client_img(), 10):
+                if gui_overlay(face, self.client_img()):
                     opened = True
                     break
             if not opened:
@@ -1075,8 +1090,7 @@ class Macro:
             return True
         finally:
             if opened:
-                self.press("esc")
-                time.sleep(0.4)
+                self.close_gui(face)
             winapi.send_mouse_move(-turn[0], -turn[1])
             time.sleep(0.5)
             self.press(rod_key)                      # 낚싯대를 손에 (다시 낚시할 수 있게)

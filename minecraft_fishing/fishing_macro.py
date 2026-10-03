@@ -183,6 +183,7 @@ class Macro:
             self.stats["started"] = time.time()
             self.run_caught = 0
             self.depleted = set()
+            self.inv_off, self.inv_fails = False, 0
             self.err_retries = 0
             if not isinstance(self.logger, FileLog) and self.cfg.get("log_file"):
                 self.logger = FileLog()
@@ -921,6 +922,12 @@ class Macro:
             if opened:
                 self.close_gui(before)
             time.sleep(0.3)
+            # 계속 못 읽으면 (서버 커스텀 인벤 등) 괜히 인벤을 열었다 닫지 않게 이번 낚시 동안 끔
+            useful = (c["exact_durability"] and self.exact is not None) or (c["inv_full_stop"] and verified)
+            self.inv_fails = 0 if useful else getattr(self, "inv_fails", 0) + 1
+            if self.inv_fails >= 2:
+                self.inv_off = True
+                self.inv_note += " -> 2번 연속 못 읽어서 이번 낚시 동안 인벤 확인 끔 (내구도는 색 막대로)"
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
 
@@ -1129,7 +1136,7 @@ class Macro:
         c = self.cfg
         if self._hist_t is None:
             self._hist_t = time.time()
-        if self.inv_due and (c["exact_durability"] or c["inv_full_stop"]):
+        if self.inv_due and (c["exact_durability"] or c["inv_full_stop"]) and not getattr(self, "inv_off", False):
             self.inventory_check()
         if c["inv_full_stop"] and self.inv_empty is not None and self.inv_empty <= c["inv_min_empty"]:
             self.stop_with(f"인벤 빈칸 {self.inv_empty}개 -> 가득 차서 정지")

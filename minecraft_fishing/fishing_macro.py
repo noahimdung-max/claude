@@ -22,7 +22,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    screen_changed, save_debug_image, read_number, turn_pixels, load_repair_refs, hotbar_index)
+                    screen_changed, save_debug_image, read_number, turn_pixels, hotbar_index)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -995,7 +995,6 @@ class Macro:
         gold = self.read_gold()
         if gold is not None and gold < c["repair_cost"]:
             self.stop_with(f"골드가 모자라서 수리 못 해 ({gold:,} < {c['repair_cost']:,}) -> 정지")
-        refs = load_repair_refs()
         rod_key = str(c["repair_rod_slot"])
         h1, h9 = pts["hot1"], pts["hot9"]
         if pts.get("hot"):
@@ -1008,6 +1007,15 @@ class Macro:
             self.stop_with("화면(창) 크기가 수리 창 위치 지정 때와 달라 -> '수리 창 위치 지정'을 다시 해줘")
         if self.hotbar_slot() and self.gui_scale and abs(self.gui_scale * 18 - pitch) > 0.2 * pitch:
             self.stop_with(f"마크 GUI 배율이 수리 창 위치 지정 때와 달라 (지금 {self.gui_scale}) -> 다시 지정해줘")
+
+        half = max(4, int(pitch * 0.35))
+
+        def crop_at(pt):
+            x, y = int(pt[0]), int(pt[1])
+            return self.screen.full()[y - half:y + half, x - half:x + half].astype(np.int16)
+
+        def differs(a, b):
+            return a.shape != b.shape or float(np.abs(a - b).mean()) > 6
 
         def moved(n, shift=True):
             """n번 칸 아이템을 Shift+클릭. 칸 모양이 바뀌었는지 확인하고 안 바뀌면 한 번 더."""
@@ -1026,7 +1034,7 @@ class Macro:
         self.set_shift(False)
         before = self.client_img()
         winapi.send_mouse_move(*turn)
-        opened, ok = False, False
+        opened = False
         try:
             self.sleep(0.4)
             face = self.client_img()
@@ -1045,25 +1053,25 @@ class Macro:
             if not moved(c["repair_rod_slot"]):                          # 낚싯대 -> 수리 칸
                 self.out(f"[수리] {c['repair_rod_slot']}번 칸 낚싯대가 안 옮겨졌어 (그 칸에 낚싯대가 있는지 확인)")
                 return False
+            rod_empty = crop_at(hot(c["repair_rod_slot"]))               # 낚싯대 빠진 빈 칸 모양
             if not moved(c["repair_string_slot"]):                       # 실 -> 재료 칸
                 self._hover_key(pts["in1"], rod_key)                     # 낚싯대 되돌려 놓기
                 self.out(f"[수리] {c['repair_string_slot']}번 칸 실이 안 옮겨졌어 (실이 떨어졌거나 칸이 다름)")
                 return False
+            in2_full = crop_at(pts["in2"])                               # 실이 들어간 모양
             self._gui_click(pts["ok"])                                   # ✓ (골드 차감)
-            self.sleep(0.6)
-            img = self.screen.full()
-            done = self._slot_like(img, pts["in1"], refs.get("in1"))      # 수리되면 첫 칸이 빈 칸으로
-            if done is False:
-                # 수리 안 됨 (실/골드 부족) -> 낚싯대, 실 되돌려 놓기
-                self._hover_key(pts["in1"], rod_key)
-                if self._slot_like(img, pts["in2"], refs.get("in2")) is False:
-                    self._gui_click(pts["in2"], shift=True)
-                self.out("[수리] 수리가 안 됐어 (실이나 골드가 모자란 듯)")
+            self.sleep(0.8)
+            # 여기서는 수리 됐는지 판단하지 않음 (창 모양만으로는 틀릴 수 있음).
+            # 무조건 낚싯대를 원래 칸으로 꺼내고 -> 창 닫은 뒤 실제 내구도로 확인.
+            self._hover_key(pts["out"], rod_key)                         # 수리됐으면 결과 칸에 있음
+            if not differs(crop_at(hot(c["repair_rod_slot"])), rod_empty):
+                self._hover_key(pts["in1"], rod_key)                     # 수리 안 됐으면 첫 칸에 그대로
+            rod_back = differs(crop_at(hot(c["repair_rod_slot"])), rod_empty)
+            if not differs(crop_at(pts["in2"]), in2_full):               # 실이 남아 있으면 원래 칸으로
+                self._hover_key(pts["in2"], str(c["repair_string_slot"]))
+            if not rod_back:
+                self.out(f"[수리] 낚싯대를 {c['repair_rod_slot']}번 칸으로 못 꺼냈어 (모루 창을 확인해줘)")
                 return False
-            self._hover_key(pts["out"], rod_key)                         # 수리된 낚싯대 -> 원래 칸
-            if self._slot_like(self.screen.full(), pts["in2"], refs.get("in2")) is False:
-                self._gui_click(pts["in2"], shift=True)                  # 남은 실 돌려받기
-            ok = True
             return True
         finally:
             if opened:
@@ -1071,8 +1079,10 @@ class Macro:
                 time.sleep(0.4)
             winapi.send_mouse_move(-turn[0], -turn[1])
             time.sleep(0.5)
+            self.press(rod_key)                      # 낚싯대를 손에 (다시 낚시할 수 있게)
+            time.sleep(0.3)
             if not screen_changed(before, self.client_img(), 14):
-                self.out("[수리] 낚시 자리로 돌아옴" + (" - 수리 완료!" if ok else ""))
+                self.out("[수리] 낚시 자리로 돌아옴")
             elif self.running:
                 self.out("[수리] 원래 시점과 화면이 달라 보여 (확인해줘)")
             self.exact = None
@@ -1114,9 +1124,16 @@ class Macro:
         if c["goal_minutes"] and self.stats["started"] and time.time() - self.stats["started"] >= c["goal_minutes"] * 60:
             self.stop_with(f"{c['goal_minutes']}분 지남 -> 정지")
         if not self.durability_ok() and c.get("repair_on"):
+            gold0 = self.read_gold()
             if not self.repair_rod():
-                self.stop_with("자동 수리 실패 (실·골드가 모자라거나 모루를 못 열었어) -> 정지")
-            notify(c["discord_webhook"], "낚싯대 자동 수리 완료")
+                self.stop_with("자동 수리를 못 했어 (위 알림 참고) -> 정지")
+            self.sleep(0.3)
+            gold1 = self.read_gold()
+            paid = f" (골드 {gold0:,} -> {gold1:,})" if gold0 is not None and gold1 is not None else ""
+            if not self.durability_ok():
+                self.stop_with("수리 후에도 내구도가 낮아: 실이나 골드가 모자랐던 듯" + paid + " -> 정지")
+            self.out("[수리] 수리 완료!" + paid)
+            notify(c["discord_webhook"], "낚싯대 자동 수리 완료" + paid)
         if not self.durability_ok() and not (c["rod_swap"] and self.swap_rod()):
             if c["rod_swap"]:
                 self.stop_with("교체할 낚싯대가 더 없어 (모든 칸 내구도 부족) -> 정지")

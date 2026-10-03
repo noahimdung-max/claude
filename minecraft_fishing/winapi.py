@@ -437,18 +437,35 @@ if IS_WIN:
     _sig(kernel32, "GetModuleHandleW", wintypes.HMODULE, wintypes.LPCWSTR)
 
 
-def send_mouse_move(dx, dy, step=24, pause=0.004):
-    """마우스를 상대적으로 (dx, dy) 만큼. 한 번에 크게 보내지 않고 잘게 나눠서 (마크가 빠짐없이 받게)."""
+def send_mouse_move(dx, dy, duration=None, step=4):
+    """마우스를 상대적으로 (dx, dy) 만큼 부드럽게. 천천히 출발해서 천천히 멈춤.
+    잘게(최대 step 칸씩) 나눠 보내고 정수로 누적해서 총 이동량은 정확히 (dx, dy).
+    duration 을 안 주면 거리에 맞춰 0.15~1.2초."""
+    import math
     dx, dy = int(round(dx)), int(round(dy))
-    n = max(1, int(max(abs(dx), abs(dy)) / step + 0.999))
+    dist = max(abs(dx), abs(dy))
+    if dist == 0:
+        return
+    if duration is None:
+        duration = min(1.2, max(0.15, dist / 3000))
+    n = max(1, int(dist / step + 0.999), int(duration / 0.004))
+    t0 = time.perf_counter()
     sent_x = sent_y = 0
     for i in range(1, n + 1):
-        tx, ty = round(dx * i / n), round(dy * i / n)
-        inp = _INPUT(type=0)                         # INPUT_MOUSE
-        inp.u.mi = _MOUSEINPUT(tx - sent_x, ty - sent_y, 0, 0x0001, 0, 0)   # MOUSEEVENTF_MOVE (상대)
+        f = (1 - math.cos(math.pi * i / n)) / 2                 # 천천히 -> 빠르게 -> 천천히
+        tx, ty = round(dx * f), round(dy * f)
+        if tx != sent_x or ty != sent_y:
+            inp = _INPUT(type=0)                             # INPUT_MOUSE
+            inp.u.mi = _MOUSEINPUT(tx - sent_x, ty - sent_y, 0, 0x0001, 0, 0)   # MOUSEEVENTF_MOVE (상대)
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            sent_x, sent_y = tx, ty
+        wait = t0 + duration * i / n - time.perf_counter()
+        if wait > 0.002:
+            time.sleep(wait)
+    if (sent_x, sent_y) != (dx, dy):                         # 혹시 남은 것 (반올림)
+        inp = _INPUT(type=0)
+        inp.u.mi = _MOUSEINPUT(dx - sent_x, dy - sent_y, 0, 0x0001, 0, 0)
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-        sent_x, sent_y = tx, ty
-        time.sleep(pause)
 
 
 class RawMouseRecorder:

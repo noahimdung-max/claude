@@ -23,7 +23,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px)
+                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -1018,44 +1018,51 @@ class Macro:
             return turn_pixels(c["repair_yaw"], c.get("repair_pitch", 0), c["mouse_sens_pct"])
         return None
 
-    def align_view(self, ref, tries=4):
-        """화면을 ref(낚시하던 시점)와 비교해서 어긋난 만큼 마우스로 되돌림. 맞으면 True.
-        마우스를 왔다 갔다 하면 조금씩 밀릴 수 있어서 (수리할 때마다 쌓임) 매번 원래 화면에 맞춤."""
+    def align_view(self, ref, tries=5, tag="[수리]"):
+        """화면을 ref(정확한 시점일 때 화면)와 비교해서 어긋난 만큼 마우스로 조금씩 맞춤. 맞으면 True.
+        마우스를 왔다 갔다 하면 조금씩 밀릴 수 있어서 (수리할 때마다 쌓임) 매번 기준 화면에 맞춤."""
         cur = self.client_img()
-        if ref is None or cur is None:
+        if ref is None or cur is None or ref.shape != cur.shape:
             return False
-        h = cur.shape[0]
+        h, w = cur.shape[:2]
         sens = self.cfg.get("mouse_sens_pct") or (winapi.read_mouse_sensitivity()[0] or 0.5) * 200
         s = sens / 200
         deg = 0.15 * ((s * 0.6 + 0.2) ** 3 * 8)                # 마우스 1칸 = deg 도
         cpp = 1 / (view_focal_px(h) * math.radians(deg))      # 화면 1px = 마우스 몇 칸 (FOV 70 기준, 아래서 실측으로 고침)
-        tol = max(3.0, h / 300)
+        tol = max(2.0, h / 500)
+        r = view_shift(ref, cur)
         for i in range(tries):
-            r = view_shift(ref, cur)
             if r is None:
                 return False
             dx, dy, resp = r
-            if resp < 0.08:
-                self.out(f"[수리] 시점 비교가 안 돼 (화면이 너무 다름, 일치 {resp:.2f})")
+            if resp < 0.1 or abs(dx) > w * 0.3 or abs(dy) > h * 0.3:
+                self.out(f"{tag} 기준 화면과 너무 달라서 시점 맞추기는 건너뜀 (일치 {resp:.2f})")
                 return False
             if abs(dx) <= tol and abs(dy) <= tol:
                 return True
             mx, my = round(dx * cpp), round(dy * cpp)
             if mx == 0 and my == 0:
                 return True
-            self.logger.write("REPAIR", f"시점 보정 {i + 1}: 화면 {dx:.0f},{dy:.0f}px -> 마우스 {mx},{my}")
-            winapi.send_mouse_move(mx, my)
-            time.sleep(0.35)
+            self.logger.write("REPAIR", f"시점 맞춤 {i + 1}: 화면 {dx:.1f},{dy:.1f}px -> 마우스 {mx},{my}")
+            winapi.send_mouse_move(mx, my, duration=0.15)
+            time.sleep(0.3)
             cur = self.client_img()
             r2 = view_shift(ref, cur)
-            if r2 and r2[2] >= 0.08:
+            if r2 and r2[2] >= 0.1:
                 moved = math.hypot(dx - r2[0], dy - r2[1])
                 if moved > 3:                                    # 실제로 움직인 양으로 비율 고침
                     k = math.hypot(mx, my) / moved
                     if 0.3 * cpp < k < 3 * cpp:
                         cpp = k
-        r = view_shift(ref, cur)
-        return bool(r and r[2] >= 0.08 and abs(r[0]) <= tol * 2 and abs(r[1]) <= tol * 2)
+            r = r2
+        return bool(r and r[2] >= 0.1 and abs(r[0]) <= tol * 2 and abs(r[1]) <= tol * 2)
+
+    def anvil_ref(self):
+        """모루를 정확히 바라본 화면 (방향 기록 때 저장). 없거나 화면 크기가 다르면 None."""
+        if not ANVIL_PATH.exists():
+            return None
+        img = cv2.imdecode(np.fromfile(str(ANVIL_PATH), np.uint8), cv2.IMREAD_COLOR)
+        return img
 
     def read_gold(self):
         roi = self.cfg.get("gold_roi")
@@ -1137,7 +1144,10 @@ class Macro:
         winapi.send_mouse_move(*turn)
         opened, face = False, None
         try:
-            self.sleep(0.4)
+            self.sleep(0.3)
+            anvil = self.anvil_ref()
+            if anvil is not None:
+                self.align_view(anvil)               # 모루 화면에 딱 맞춤
             face = self.client_img()
             self.right_click()
             end = time.perf_counter() + 2.0
@@ -1145,6 +1155,8 @@ class Macro:
                 self.sleep(0.1)
                 if gui_overlay(face, self.client_img()):
                     opened = True
+                    if not ANVIL_PATH.exists():          # 각도 방식: 처음 열린 모루 화면을 기준으로 저장
+                        cv2.imencode(".png", face)[1].tofile(str(ANVIL_PATH))
                     break
             if not opened:
                 self.out("[수리] 모루 창이 안 열렸어 (모루 방향을 다시 기록해줘)")

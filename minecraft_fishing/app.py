@@ -28,7 +28,7 @@ except Exception:
 
 import keyboard
 
-from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
+from common import (ANVIL_PATH, SUBTITLE_PATH, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
@@ -1299,6 +1299,7 @@ class App:
         c["mouse_sens_pct"], c["repair_yaw"], c["repair_pitch"] = sens, yaw, pitch
         c["repair_turn"] = None                      # 각도 방식으로
         save_config(c)
+        ANVIL_PATH.unlink(missing_ok=True)           # 예전 모루 화면은 버림 (첫 수리 때 다시 저장)
         from common import turn_pixels
         dx, dy = turn_pixels(yaw, pitch, sens)
         self.log(f"모루 방향: 각도로 설정 (좌우 {yaw:g}°, 위아래 {pitch:g}° = 마우스 {dx}, {dy})", "good")
@@ -1327,8 +1328,24 @@ class App:
             c = self.cfg
             c["repair_turn"] = [int(dx), int(dy)]
             save_config(c)
+            img = self.grab_game()                   # 모루를 십자선에 맞춘 화면 = 돌아갈 때 맞춤 기준
+            if img is not None:
+                cv2.imencode(".png", img)[1].tofile(str(ANVIL_PATH))
             self.log(f"모루 방향 기록 완료 (마우스 {dx}, {dy}). 마크에서 다시 물 쪽으로 돌려놔", "good")
             self.draw_rod_page()
+
+    def grab_game(self):
+        """지금 마크 게임 화면 (창 안쪽). 못 찾으면 None."""
+        if not IS_WIN or not self.macro:
+            return None
+        hwnd = winapi.find_minecraft()
+        if not hwnd:
+            return None
+        self.macro.hwnd = hwnd
+        try:
+            return self.macro.client_img()
+        except Exception:
+            return None
 
     def test_turn(self):
         if not self.macro or self.macro.running:
@@ -1339,16 +1356,26 @@ class App:
             messagebox.showinfo("모루 방향", "먼저 방향을 기록하거나 각도를 넣어줘")
             return
         hwnd = winapi.find_minecraft()
+        m = self.macro
 
         def run():
             if hwnd:
                 winapi.bring_to_front(hwnd)
             time.sleep(0.6)
+            home = self.grab_game()
             winapi.send_mouse_move(*turn)
-            time.sleep(2.0)
+            time.sleep(0.3)
+            anvil = m.anvil_ref()
+            if anvil is not None and m.align_view(anvil, tag="[테스트]"):
+                m.out("[테스트] 모루 화면에 맞춤")
+            time.sleep(1.5)
             winapi.send_mouse_move(-turn[0], -turn[1])
+            time.sleep(0.3)
+            if home is not None:
+                m.out("[테스트] 원래 시점으로 돌아옴" if m.align_view(home, tag="[테스트]")
+                      else "[테스트] 원래 시점과 달라 보여 (확인해줘)")
         threading.Thread(target=run, daemon=True).start()
-        self.log("모루 보기 테스트: 2초 동안 모루를 보고 다시 돌아와. 십자선이 모루에 있는지 봐줘", "warn")
+        self.log("모루 보기 테스트: 모루를 보고(화면 맞춤) 다시 돌아와. 십자선이 모루에 있는지 봐줘", "warn")
 
     def click_eslot(self, e):
         k = int(e.x // (int(self.eslot_cv["width"]) / 10))

@@ -14,6 +14,7 @@ DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else HER
 CONFIG_PATH = DATA_DIR / "config.json"
 SUBTITLE_PATH = DATA_DIR / "subtitle.png"
 HISTORY_PATH = DATA_DIR / "history.json"
+ANVIL_PATH = DATA_DIR / "anvil_view.png"     # 모루를 정확히 바라본 화면 (돌아갈 때 맞춤 기준)
 
 DEFAULTS = {
     "monitor": 1,

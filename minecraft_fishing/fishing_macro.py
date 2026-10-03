@@ -28,8 +28,38 @@ pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
 
 
+class FileLog:
+    """세부 탭에서 '로그 남기기'를 켜면 exe 옆 macro.log 에 단계별 기록 (1MB 넘으면 자동 교체, 최대 2개)."""
+
+    def __init__(self):
+        import logging
+        from logging.handlers import RotatingFileHandler
+        from common import DATA_DIR
+        self.log = logging.getLogger("fishing_macro")
+        self.log.setLevel(logging.DEBUG)
+        if not self.log.handlers:
+            h = RotatingFileHandler(DATA_DIR / "macro.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+            h.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s", "%H:%M:%S"))
+            self.log.addHandler(h)
+
+    def write(self, tag, msg=""):
+        import logging
+        if tag == "GAME":                # 미니게임 프레임별 기록은 너무 많아서 조작이 느려질 수 있음 -> 요약만
+            return
+        level = {"ERROR": logging.ERROR, "INFO": logging.INFO, "KEY": logging.INFO}.get(tag, logging.DEBUG)
+        self.log.log(level, f"{tag:6} {msg}")
+
+    def snap(self, *a):
+        pass
+
+    def config(self, cfg):
+        keys = ("bite_mode", "background", "bar_roi", "subtitle_roi", "durability_max", "durability_stop_pct",
+                "left_click_cps", "rod_swap", "exact_durability", "inv_full_stop")
+        self.write("CONFIG", ", ".join(f"{k}={cfg.get(k)}" for k in keys))
+
+
 class NullLog:
-    """기록 안 함 (로그 기능 제거)."""
+    """기록 안 함."""
     def write(self, *a):
         pass
 
@@ -88,7 +118,8 @@ class Macro:
     def __init__(self, cfg, debug=False, out=print, hotkeys=True, logger=None):
         self.cfg = cfg
         self.debug = debug
-        self.logger = logger or NullLog()
+        self.logger = logger or (FileLog() if cfg.get("log_file") else NullLog())
+        self.err_retries = 0             # 연속 오류 복구 시도 횟수
         self._ui_out = out
         self.last_view = None            # 마지막으로 캡처한 바 화면 (기록용)
         self.screen = Screen(cfg["monitor"])
@@ -151,6 +182,12 @@ class Macro:
             self.stats["started"] = time.time()
             self.run_caught = 0
             self.depleted = set()
+            self.err_retries = 0
+            if not isinstance(self.logger, FileLog) and self.cfg.get("log_file"):
+                self.logger = FileLog()
+            elif isinstance(self.logger, FileLog) and not self.cfg.get("log_file"):
+                self.logger = NullLog()
+            self.logger.config(self.cfg)
             self.exact = None
             self.inv_due = True
             self._hist_t = None
@@ -817,7 +854,7 @@ class Macro:
             note = []
             if verified:
                 self.move_mouse(max(0, x0 - 20 * s), y0 + 20 * s)  # 칸 위에 마우스가 있으면 밝아져서 빈칸 오판
-                time.sleep(0.25)
+                self.sleep(0.25)
                 img = self.client_img()
                 self.inv_map = [slot_is_empty(img, sl) for sl in inventory_slots(inv)]
                 self.inv_empty = sum(self.inv_map)
@@ -873,7 +910,7 @@ class Macro:
                 continue
             self.press(str(nxt))
             self.exact = None
-            time.sleep(0.4)
+            self.sleep(0.4)
             self.out(f"[교체] 낚싯대 {cur or '?'}번 칸 -> {nxt}번 칸")
             notify(self.cfg["discord_webhook"], f"낚싯대 교체: {cur or '?'}번 -> {nxt}번 칸")
             if self.cfg["exact_durability"]:
@@ -935,13 +972,26 @@ class Macro:
                 if not self.io_ready:
                     self.setup_io()
                 self.cycle()
+                self.err_retries = 0         # 한 바퀴 무사히 돌면 복구 횟수 초기화
             except Stop:
                 pass
             except Exception:
-                self.running = False
                 tb = traceback.format_exc()
                 self.logger.write("ERROR", tb)
                 save_error(tb)
+                last = tb.strip().splitlines()[-1]
+                if self.running and self.err_retries < 3:
+                    # 랙·캡처 끊김 같은 일시적 오류: Shift 떼고 창/캡처를 다시 잡은 뒤 이어서
+                    self.err_retries += 1
+                    self.out(f"오류 -> 복구 시도 {self.err_retries}/3: {last}")
+                    self.set_shift(False)
+                    self.io_ready = False
+                    self.state = "오류 복구 중"
+                    end = time.perf_counter() + 1.5
+                    while self.running and not self.quit and time.perf_counter() < end:
+                        time.sleep(0.05)
+                    continue
+                self.running = False
                 notify(self.cfg["discord_webhook"], "오류로 정지: " + tb.strip().splitlines()[-1])
                 self.out("오류로 정지: " + tb.strip().splitlines()[-1] + "  (error.txt 에 자세히)")
             finally:

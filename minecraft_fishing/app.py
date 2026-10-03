@@ -578,6 +578,8 @@ class App:
         self.macro = None
         threading.Thread(target=self.worker, daemon=True).start()
         keyboard.add_hotkey("f8", self.toggle)
+        self.quit_req = threading.Event()
+        keyboard.add_hotkey("f12", self.quit_req.set)      # 완전 종료 (tk 는 tick 에서 닫음)
         keyboard.add_hotkey("f7", self.f7.set)
 
         self.refresh_status()
@@ -751,8 +753,11 @@ class App:
         self.reel_var = tk.BooleanVar(value=self.cfg["reel_click_after_game"])
         PixelCheck(a, "미니게임 끝나고 우클릭 한 번 더", self.reel_var).grid(
             row=len(self.SETTINGS), column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
+        self.logf_var = tk.BooleanVar(value=self.cfg["log_file"])
+        PixelCheck(a, "로그 남기기 (exe 옆 macro.log, 다음 시작부터)", self.logf_var).grid(
+            row=len(self.SETTINGS) + 1, column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
-            row=len(self.SETTINGS) + 1, column=0, columnspan=2, pady=(6 * S, 0))
+            row=len(self.SETTINGS) + 2, column=0, columnspan=2, pady=(6 * S, 0))
 
         pn = Panel(self.pages["adv"], "디스코드 알림", self.icons["chat"])
         pn.pack(pady=(8 * S, 0))
@@ -979,6 +984,9 @@ class App:
         self.root.after(100, self.tick)
 
     def tick_body(self):
+        if self.quit_req.is_set():
+            self.close()
+            return
         while not self.q.empty():
             self.log(self.q.get())
 
@@ -1640,6 +1648,7 @@ class App:
             messagebox.showerror("오류", "숫자만 입력해줘")
             return
         self.cfg["reel_click_after_game"] = self.reel_var.get()
+        self.cfg["log_file"] = self.logf_var.get()
         self.save_hook()
         self.log("세부 설정 저장 완료!", "good")
 

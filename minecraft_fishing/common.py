@@ -39,6 +39,7 @@ DEFAULTS = {
     "inv_check_every": 10,       # 몇 마리마다 인벤 열어서 확인할지
     "inv_full_stop": False,      # 인벤 빈칸이 기준 이하면 멈춤
     "inv_min_empty": 0,          # 빈칸이 이 개수 이하면 '가득 참'
+    "log_file": False,           # 세부 탭: exe 옆 macro.log 에 단계별 기록
     "rod_swap": False,           # 내구도 기준 아래면 다른 칸 낚싯대로 교체
     "rod_slots": [1, 2, 3],      # 낚싯대가 들어 있는 핫바 칸 (1~9)
     "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)

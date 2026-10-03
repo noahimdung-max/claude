@@ -27,10 +27,7 @@ DEFAULTS = {
     "bar_search_roi": None,      # 자동 탐색 범위. 비워두면 화면 아래쪽 가운데
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
-    "gauge_roi": None,           # [x, y, w, h] 바 위 원형 게이지 (선택: 가득 찼는지 판정용)
-    "gauge_color": [104, 217, 139],  # [B, G, R] 게이지 채워진 테두리 밝은 초록
-    "gauge_full_pixels": 80,     # 게이지 가득 찼을 때 픽셀 수(캘리브레이션 시 자동 측정)
-    "gauge_full_ratio": 0.95,
+    "sneak_key": "shift",        # 미니게임 웅크리기 키: shift / ctrl
     "durability_roi": None,      # [x, y, w, h] 핫바 낚싯대 칸의 내구도 줄만
     "durability_max": 64,        # 낚싯대 최대 내구도
     "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
@@ -64,7 +61,6 @@ DEFAULTS = {
     "total_caught": 0,           # 지금까지 낚은 총 수 (계속 누적)
     "tolerance": 30,             # 색 허용 오차(채널별)
     "bar_tolerance": 45,         # 괄호는 픽셀마다 밝기 차이가 커서 넉넉히
-    "gauge_tolerance": 20,
     "min_pixels": 6,             # 검출로 인정할 최소 픽셀 수
     "cast_settle_sec": 2.0,      # 던진 뒤 찌가 자리잡을 때까지 대기
     "bite_timeout_sec": 45.0,    # 입질 안 오면 다시 던짐

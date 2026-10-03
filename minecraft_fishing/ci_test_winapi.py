@@ -55,6 +55,8 @@ try:
     winapi.post_right_click(hwnd)
     winapi.post_shift(hwnd, True)
     winapi.post_shift(hwnd, False)
+    winapi.post_shift(hwnd, True, "ctrl")
+    winapi.post_shift(hwnd, False, "ctrl")
     check("post messages", True)
     check("is_minimized false", not winapi.is_minimized(hwnd))
     t = time.perf_counter()

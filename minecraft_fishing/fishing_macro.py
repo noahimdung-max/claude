@@ -18,7 +18,7 @@ import pydirectinput
 
 import winapi
 
-from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, color_mask, durability_value, find_bobber, fish_blob_x,
+from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
@@ -153,7 +153,7 @@ class Macro:
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None, "active": False,
-                      "sub": None, "gauge": None, "dura": None, "dura_max": None, "caught": 0,
+                      "sub": None, "dura": None, "dura_max": None, "caught": 0,
                       "casts": 0, "games": 0, "catch_times": [], "colors": {}, "started": None}
         if hotkeys:
             import keyboard
@@ -321,10 +321,14 @@ class Macro:
             stop_ev.wait(nxt - time.perf_counter())
 
     def _send_shift(self, method, down):
+        # 웅크리기 키 (설정: Shift/Ctrl). 누른 키로 떼야 하니 누를 때 기억
+        if down:
+            self.sneak_key = "ctrl" if self.cfg.get("sneak_key") == "ctrl" else "shift"
+        key = getattr(self, "sneak_key", "shift")
         if method == "post":
-            winapi.post_shift(self.hwnd, down)
+            winapi.post_shift(self.hwnd, down, key)
         else:
-            (pydirectinput.keyDown if down else pydirectinput.keyUp)("shift")
+            (pydirectinput.keyDown if down else pydirectinput.keyUp)(key)
 
     def set_shift(self, down):
         method = self._shift_method()
@@ -486,15 +490,6 @@ class Macro:
         self.stats["sub"] = s
         return s
 
-    def gauge_ratio(self):
-        c = self.cfg
-        g = None
-        if c["gauge_roi"]:
-            img = self.screen.grab(c["gauge_roi"])
-            g = color_mask(img, c["gauge_color"], c["gauge_tolerance"]).sum() / c["gauge_full_pixels"]
-        self.stats["gauge"] = g
-        return g
-
     def durability_reading(self):
         """(내구도 숫자, 종류) - 종류: color / low(1~2) / full. 영역 미설정이면 None."""
         c = self.cfg
@@ -540,7 +535,6 @@ class Macro:
             self.bobber()
         self.subtitle_score()
         self.bar_state()
-        self.gauge_ratio()
         self.durability_reading()
 
     # ---------- 단계 ----------
@@ -700,7 +694,7 @@ class Macro:
         snapped_lost = snapped_nozone = False
         lost_img, lost_n = None, 0
         nozone_since = None
-        end_reason = "물고기/게이지 사라짐"
+        end_reason = "미니게임 사라짐"
         clicking = threading.Event()
         if c["left_click_cps"] > 0:
             threading.Thread(target=self._clicker, args=(clicking,), daemon=True).start()
@@ -713,11 +707,6 @@ class Macro:
                 frame_dt = 0.9 * frame_dt + 0.1 * (now - last_frame)
                 last_frame = now
                 self.set_shift(self.shift_down)   # 창이 앞/뒤로 바뀌었으면 Shift 입력 방식 갈아탐
-
-                g = self.gauge_ratio()
-                if g is not None and g >= c["gauge_full_ratio"]:
-                    end_reason = "게이지 가득"
-                    break
 
                 if not active:
                     if lost_img is None:
@@ -773,7 +762,7 @@ class Macro:
                 if toggled or raw_zone is None or n % 10 == 0:
                     self.logger.write("GAME", f"t={now - t0:.2f} 구간={'예전값 ' if raw_zone is None else ''}{zone:.0f} "
                                               f"폭={self.zone_w:.0f} 물고기={fish:.0f} 오차={err:.0f} 속도={vel:.0f} "
-                                              f"shift={'O' if self.shift_down else 'X'} 게이지={g}")
+                                              f"shift={'O' if self.shift_down else 'X'}")
                 time.sleep(0.005)
         finally:
             clicking.set()
@@ -1287,7 +1276,7 @@ def preview(cfg):
             s = m.stats
             info = (f"자막 일치={fmt(s['sub'], '.0%')} | 찌 px={s['bobber_n']} | "
                     f"미니게임={'O' if s['active'] else 'X'} 구간={fmt(s['zone'], '.0f')} 물고기={fmt(s['fish'], '.0f')} | "
-                    f"게이지={fmt(s['gauge'], '.0%')} | 내구도={'-' if s['dura'] is None else s['dura'][0]}")
+                    f"내구도={'-' if s['dura'] is None else s['dura'][0]}")
             print("\r" + info + "    ", end="", flush=True)
             time.sleep(0.05)
     except KeyboardInterrupt:

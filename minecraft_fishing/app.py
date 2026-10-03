@@ -28,7 +28,7 @@ except Exception:
 
 import keyboard
 
-from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
+from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
@@ -580,7 +580,6 @@ class App:
         ("subtitle", "chat", "입질 자막", "직접 낚시하다 입질 와서 자막 '낚시찌 ... 첨벙'이 떴을 때"),
         ("bobber", "bobber", "찌 (예비)", "물을 바라보고 찌가 떠 있을 때"),
         ("rod", "rod", "낚싯대 내구도", "핫바에 낚싯대 내구도 줄이 보일 때"),
-        ("gauge", "emerald", "원형 게이지", "게이지가 '가득 찬' 순간 (스크린샷 파일 추천)"),
     ]
     SETTINGS = [
         ("subtitle_threshold", "자막 일치 기준 (0~1)", 0.5, 0.99, 0.01),
@@ -780,8 +779,7 @@ class App:
         g = tk.Frame(p3.content, bg=PANEL)
         g.pack(fill="x")
         self.vals = {}
-        for i, (k, ic, name) in enumerate([("bite", "chat", "입질 감지"), ("dura", "rod", "내구도"),
-                                           ("gauge", "emerald", "게이지")]):
+        for i, (k, ic, name) in enumerate([("bite", "chat", "입질 감지"), ("dura", "rod", "내구도")]):
             r, col = divmod(i, 2)
             tk.Label(g, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=col * 3, pady=2 * S)
             label(g, name).grid(row=r, column=col * 3 + 1, sticky="w", padx=(2 * S, 6 * S))
@@ -811,14 +809,21 @@ class App:
             var = tk.StringVar(value=str(self.cfg[k]))
             spinbox(a, var, lo, hi, step).grid(row=i, column=1, pady=1 * S)
             self.adv_vars[k] = var
+        n = len(self.SETTINGS)
+        sk = tk.Frame(a, bg=PANEL)
+        sk.grid(row=n, column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
+        label(sk, "웅크리기 키 (마크 조작 설정과 같게)").pack(side="left", padx=(0, 8 * S))
+        self.sneak_var = tk.StringVar(value=self.cfg["sneak_key"])
+        for text, val in (("Shift", "shift"), ("Ctrl", "ctrl")):
+            PixelCheck(sk, text, self.sneak_var, self.save_sneak, radio_value=val).pack(side="left", padx=(0, 8 * S))
         self.reel_var = tk.BooleanVar(value=self.cfg["reel_click_after_game"])
         PixelCheck(a, "미니게임 끝나고 우클릭 한 번 더", self.reel_var).grid(
-            row=len(self.SETTINGS), column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
+            row=n + 1, column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
         self.logf_var = tk.BooleanVar(value=self.cfg["log_file"])
         PixelCheck(a, "로그 남기기 (exe 옆 macro.log, 다음 시작부터)", self.logf_var).grid(
-            row=len(self.SETTINGS) + 1, column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
+            row=n + 2, column=0, columnspan=2, sticky="w", pady=(4 * S, 0))
         PixelButton(a, "설정 저장", self.save_adv, "green").grid(
-            row=len(self.SETTINGS) + 2, column=0, columnspan=2, pady=(6 * S, 0))
+            row=n + 3, column=0, columnspan=2, pady=(6 * S, 0))
 
         pn = Panel(self.pages["adv"], "디스코드 알림", self.icons["chat"])
         pn.pack(pady=(8 * S, 0))
@@ -1113,7 +1118,6 @@ class App:
                 self.vals["bite"].config(text="-" if sub is None else f"자막 {sub:.0%}", fg=OK if hit else TXT)
             else:
                 self.vals["bite"].config(text="-" if not self.cfg["bobber_roi"] else f"찌 {s['bobber_n']}px", fg=TXT)
-            self.vals["gauge"].config(text="-" if s["gauge"] is None else f"{s['gauge']:.0%}")
             self.draw_durability(s["dura"])
             self.state_lbl.config(text=m.state, fg=OK if m.running else TXT)
             if m.running:
@@ -1757,9 +1761,9 @@ class App:
         c = self.cfg
         sub_mode = c["bite_mode"] == "subtitle"
         done = {"subtitle": c["subtitle_roi"] and SUBTITLE_PATH.exists(), "bobber": c["bobber_roi"],
-                "rod": c["durability_roi"], "gauge": c["gauge_roi"]}
+                "rod": c["durability_roi"]}
         need = {"subtitle": "필수" if sub_mode else "안 씀", "bobber": "안 씀" if sub_mode else "필수",
-                "rod": "자동", "gauge": "선택"}
+                "rod": "자동"}
         for k, ok in done.items():
             if not ok and k == "rod":
                 self.status_lbl[k].config(text="● 자동 (선택한 칸)", fg=OK)
@@ -1911,20 +1915,13 @@ class App:
                 self.macro.zone_w, self.macro.prev_zone = 0, None
             self.log("미니게임 바 직접 지정 완료!", "good")
 
-        elif item == "gauge":
-            roi = ask_roi(self.root, img, "원형 게이지 - 가득 찬 상태")
-            if not roi:
-                return
-            x, y, w, h = roi
-            n = int(color_mask(img[y:y + h, x:x + w], c["gauge_color"], c["gauge_tolerance"]).sum())
-            if n < 20:
-                messagebox.showwarning("확인", f"게이지 색이 거의 안 잡힘 ({n}px).\n가득 찬 장면이 맞는지 확인해줘.")
-                return
-            c["gauge_roi"], c["gauge_full_pixels"] = roi, n
-            self.log(f"게이지 설정 완료! ({n}px)", "good")
-
         save_config(c)
         self.refresh_status()
+
+    def save_sneak(self):
+        self.cfg["sneak_key"] = self.sneak_var.get()
+        save_config(self.cfg)
+        self.log(f"웅크리기 키: {'Ctrl' if self.cfg['sneak_key'] == 'ctrl' else 'Shift'}", "good")
 
     def save_background(self):
         self.cfg["background"] = self.bg_var.get()
@@ -2011,6 +2008,7 @@ class App:
             messagebox.showerror("오류", "숫자만 입력해줘")
             return
         self.cfg["reel_click_after_game"] = self.reel_var.get()
+        self.cfg["sneak_key"] = self.sneak_var.get()
         self.cfg["log_file"] = self.logf_var.get()
         self.save_hook()
         self.log("세부 설정 저장 완료!", "good")

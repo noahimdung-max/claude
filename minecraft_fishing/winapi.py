@@ -60,6 +60,7 @@ MK_RBUTTON = 0x0002
 WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0201, 0x0202
 MK_LBUTTON = 0x0001
 VK_SHIFT, SC_LSHIFT = 0x10, 0x2A
+SNEAK_KEYS = {"shift": (VK_SHIFT, SC_LSHIFT), "ctrl": (0x11, 0x1D)}
 PW_RENDERFULLCONTENT = 0x00000002
 PW_CLIENTONLY = 0x00000001
 
@@ -221,11 +222,13 @@ def post_mouse_move(hwnd, x, y):
     user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF))
 
 
-def post_shift(hwnd, down):
+def post_shift(hwnd, down, key="shift"):
+    """웅크리기 키(Shift 또는 Ctrl)를 마크 창에만 보냄."""
+    vk, sc = SNEAK_KEYS.get(key, SNEAK_KEYS["shift"])
     if down:
-        user32.PostMessageW(hwnd, WM_KEYDOWN, VK_SHIFT, (SC_LSHIFT << 16) | 1)
+        user32.PostMessageW(hwnd, WM_KEYDOWN, vk, (sc << 16) | 1)
     else:
-        user32.PostMessageW(hwnd, WM_KEYUP, VK_SHIFT, (SC_LSHIFT << 16) | 1 | (1 << 30) | (1 << 31))
+        user32.PostMessageW(hwnd, WM_KEYUP, vk, (sc << 16) | 1 | (1 << 30) | (1 << 31))
 
 
 class WindowScreen:

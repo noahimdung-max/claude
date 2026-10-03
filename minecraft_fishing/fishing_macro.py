@@ -157,8 +157,9 @@ class Macro:
                       "casts": 0, "games": 0, "catch_times": [], "colors": {}, "started": None}
         if hotkeys:
             import keyboard
-            keyboard.add_hotkey("f8", self.toggle)
-            keyboard.add_hotkey("f9", self.request_quit)
+            # add_hotkey 는 Alt+Tab 뒤 Alt 가 눌린 걸로 착각해서 안 먹을 수 있음 -> 키 하나만 보고 반응
+            keyboard.on_press_key("f8", lambda e: self.toggle(), suppress=False)
+            keyboard.on_press_key("f9", lambda e: self.request_quit(), suppress=False)
 
     # ---------- 입력 ----------
     def missing_setup(self):

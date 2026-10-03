@@ -421,6 +421,20 @@ class PixelStepper(tk.Frame):
         self.var.set(f"{v:.{self.dec}f}" if self.dec else str(int(round(v))))
 
 
+def hotkey(key, fn, gap=0.4):
+    """F7/F8/F12 단축키. add_hotkey 는 Alt+Tab 뒤에 Alt 를 계속 눌린 걸로 착각해서
+    F8 이 'Alt+F8' 로 취급돼 안 먹는 문제가 있음 -> 다른 키 상태와 상관없이 그 키만 보고 반응.
+    꾹 누를 때 반복 입력은 gap 초 안이면 무시."""
+    last = [0.0]
+
+    def on(e):
+        now = time.perf_counter()
+        if now - last[0] >= gap:
+            last[0] = now
+            fn()
+    keyboard.on_press_key(key, on, suppress=False)
+
+
 def spinbox(parent, var, lo, hi, step):
     return PixelStepper(parent, var, lo, hi, step)
 
@@ -608,10 +622,10 @@ class App:
 
         self.macro = None
         threading.Thread(target=self.worker, daemon=True).start()
-        keyboard.add_hotkey("f8", self.toggle)
         self.quit_req = threading.Event()
-        keyboard.add_hotkey("f12", self.quit_req.set)      # 완전 종료 (tk 는 tick 에서 닫음)
-        keyboard.add_hotkey("f7", self.f7.set)
+        hotkey("f8", self.toggle)
+        hotkey("f12", self.quit_req.set)                  # 완전 종료 (tk 는 tick 에서 닫음)
+        hotkey("f7", self.f7.set)
 
         self.refresh_status()
         self.anim_t = 0

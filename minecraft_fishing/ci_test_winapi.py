@@ -105,6 +105,23 @@ try:
     winapi.send_mouse_move(-300, -120)
     print("INFO options.txt sensitivity:", winapi.read_mouse_sensitivity(), flush=True)
 
+    # Alt+Tab 뒤처럼 Alt 가 눌린 상태여도 F8 단축키가 먹는지 (on_press_key 방식)
+    import keyboard
+    hits = []
+    keyboard.on_press_key("f8", lambda e: hits.append(1), suppress=False)
+    old = []
+    keyboard.add_hotkey("f8", lambda: old.append(1))
+    time.sleep(0.2)
+    keyboard.press("alt")
+    time.sleep(0.1)
+    keyboard.press_and_release("f8")
+    time.sleep(0.2)
+    keyboard.release("alt")
+    time.sleep(0.2)
+    print(f"INFO f8 with alt held: on_press_key={len(hits)} add_hotkey={len(old)}", flush=True)
+    check("F8 hotkey fires while Alt is held", len(hits) >= 1, len(hits))
+    keyboard.unhook_all()
+
     prio, throttle = winapi.keep_awake(hwnd)
     check("keep_awake priority", prio)
     check("keep_awake power throttling off", throttle)

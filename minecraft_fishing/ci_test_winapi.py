@@ -122,9 +122,27 @@ try:
     time.sleep(0.08)
     kb(0x77, 0x42, 2, 0)
     time.sleep(0.2)
+    time.sleep(0.5)
+    kb(0x77, 0x42, 0, 0)                           # 꾹 누르기 (자동 반복처럼 누름 신호 여러 번) -> 1번만
+    for _ in range(8):
+        time.sleep(0.08)
+        kb(0x77, 0x42, 0, 0)
+    time.sleep(0.1)
+    kb(0x77, 0x42, 2, 0)
+    time.sleep(0.3)
     poller.stop()
     print(f"INFO f8 presses seen: {len(hits)}", flush=True)
-    check("F8 hotkey fires while Alt is held and again after", len(hits) == 2, len(hits))
+    check("F8: Alt held, after, and a long hold count as 3 presses", len(hits) == 3, len(hits))
+
+    # 원시 입력 기록기를 여러 번 만들어도 (창 클래스 재사용 없이) 매번 동작
+    for i in range(3):
+        r = winapi.RawMouseRecorder().start()
+        time.sleep(0.2)
+        winapi.send_mouse_move(50, 0)
+        time.sleep(0.3)
+        d = r.stop()
+        winapi.send_mouse_move(-50, 0)
+        check(f"raw recorder #{i + 1}", abs(d[0] - 50) <= 2, d)
 
     prio, throttle = winapi.keep_awake(hwnd)
     check("keep_awake priority", prio)

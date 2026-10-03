@@ -184,6 +184,7 @@ class Macro:
             self.run_caught = 0
             self.depleted = set()
             self.inv_off, self.inv_fails = False, 0
+            self.inv_empty, self.inv_map = None, None
             self.err_retries = 0
             if not isinstance(self.logger, FileLog) and self.cfg.get("log_file"):
                 self.logger = FileLog()
@@ -262,6 +263,7 @@ class Macro:
         미니게임 바는 다시 자동으로 찾게 함."""
         c = self.cfg
         self.sub_roi, self.sub_scale_ratio = None, 1.0
+        self.sub_tmpl = None                         # 지난번 배율로 줄이거나 늘린 템플릿이 남지 않게
         try:
             cur = self.hotbar_slot() and self.gui_scale
         except Exception:
@@ -831,11 +833,27 @@ class Macro:
             ox, oy, _, _ = winapi.client_rect(self.hwnd)
             pydirectinput.moveTo(int(ox + x), int(oy + y))
 
+    def _mon_origin(self):
+        """화면 캡처 좌표(모니터 기준)의 원점 = 실제 화면 좌표. 보조 모니터면 (1920, 0) 처럼."""
+        m = self.screen.mon
+        return m.get("left", 0), m.get("top", 0)
+
     def client_img(self):
-        return self.screen.grab(list(winapi.client_rect(self.hwnd)))
+        x, y, w, h = winapi.client_rect(self.hwnd)
+        ox, oy = self._mon_origin()
+        return self.screen.grab([x - ox, y - oy, w, h])
 
     def hotbar_slot(self):
-        """지금 들고 있는 핫바 칸 (1~9). 못 찾으면 None."""
+        """지금 들고 있는 핫바 칸 (1~9). 못 찾으면 None. (한 바퀴 안에서 여러 번 불려서 0.3초 동안은 저장값)"""
+        now = time.perf_counter()
+        cache = getattr(self, "_slot_cache", None)
+        if cache and now - cache[0] < 0.3:
+            return cache[1]
+        val = self._hotbar_slot()
+        self._slot_cache = (now, val)
+        return val
+
+    def _hotbar_slot(self):
         w, h = self.screen.mon["width"], self.screen.mon["height"]
         sx, sy = int(w * 0.2), int(h * 0.7)
         slot = selected_slot(self.screen.grab([sx, sy, int(w * 0.6), h - sy]))
@@ -844,7 +862,7 @@ class Macro:
         cw = w
         if self.hwnd:
             cx, _, cw, _ = winapi.client_rect(self.hwnd)
-            sx -= cx
+            sx -= cx - self._mon_origin()[0]
         x, y, sw, sh = slot
         self.gui_scale = max(1, round(sw / 24))          # 선택 칸 테두리 = 24 GUI 픽셀
         self.stats["slot"] = hotbar_index((sx + x, y, sw, sh), cw) + 1
@@ -895,6 +913,7 @@ class Macro:
                 self.inv_empty = sum(self.inv_map)
                 note.append(f"빈칸 {self.inv_empty}개")
             else:
+                self.inv_empty, self.inv_map = None, None   # 예전 값으로 '가득 참' 판단하지 않게
                 note.append("인벤 창 모양이 달라서 빈칸은 못 셈 (inv_debug.png 를 보내줘)")
             if c["exact_durability"]:
                 if not slot:
@@ -919,7 +938,7 @@ class Macro:
                         note.append("툴팁 숫자 못 읽음 (F3+H 켰는지 확인, 안 되면 tooltip_debug.png 를 보내줘)")
             self.inv_note = " / ".join(note)
         finally:
-            if opened:
+            if opened or gui_overlay(before, self.view()):   # 열렸다고 판단하기 전에 정지돼도 닫음
                 self.close_gui(before)
             time.sleep(0.3)
             # 계속 못 읽으면 (서버 커스텀 인벤 등) 괜히 인벤을 열었다 닫지 않게 이번 낚시 동안 끔
@@ -1012,7 +1031,8 @@ class Macro:
         return read_number(self.screen.grab(roi)) if roi else None
 
     def _gui_click(self, pt, shift=False):
-        pydirectinput.moveTo(int(pt[0]), int(pt[1]))
+        ox, oy = self._mon_origin()                  # 지정한 위치는 모니터 기준 -> 실제 화면 좌표
+        pydirectinput.moveTo(int(pt[0]) + ox, int(pt[1]) + oy)
         time.sleep(0.08)
         if shift:
             pydirectinput.keyDown("shift")
@@ -1025,21 +1045,11 @@ class Macro:
 
     def _hover_key(self, pt, key):
         """칸 위에 마우스 올리고 숫자키 = 그 칸 아이템을 핫바 그 번호 칸으로 (마크 기본 기능)."""
-        pydirectinput.moveTo(int(pt[0]), int(pt[1]))
+        ox, oy = self._mon_origin()
+        pydirectinput.moveTo(int(pt[0]) + ox, int(pt[1]) + oy)
         time.sleep(0.08)
         pydirectinput.press(key)
         self.sleep(0.25)
-
-    def _slot_like(self, img, pt, ref):
-        """칸(pt) 모양이 기준 이미지(ref)와 비슷한지 (빈 칸인지 확인용)."""
-        if ref is None:
-            return None
-        h, w = ref.shape[:2]
-        x, y = int(pt[0]) - w // 2, int(pt[1]) - h // 2
-        crop = img[max(0, y):y + h, max(0, x):x + w]
-        if crop.shape != ref.shape:
-            return None
-        return float(np.abs(crop.astype(np.int16) - ref).mean()) < 18
 
     def repair_rod(self):
         """모루 자동 수리: 시점 돌려 모루 열기 -> 낚싯대·실 Shift+클릭 -> ✓ -> 수리된 낚싯대를 원래 칸으로 -> 닫고 되돌아옴.
@@ -1092,7 +1102,7 @@ class Macro:
         self.set_shift(False)
         before = self.client_img()
         winapi.send_mouse_move(*turn)
-        opened = False
+        opened, face = False, None
         try:
             self.sleep(0.4)
             face = self.client_img()
@@ -1108,6 +1118,7 @@ class Macro:
                 return False
             self.sleep(0.4)
             self.state = "수리 중"
+            in2_empty = crop_at(pts["in2"])                              # 실 넣기 전 빈 재료 칸
             if not moved(c["repair_rod_slot"]):                          # 낚싯대 -> 수리 칸
                 self.out(f"[수리] {c['repair_rod_slot']}번 칸 낚싯대가 안 옮겨졌어 (그 칸에 낚싯대가 있는지 확인)")
                 return False
@@ -1116,7 +1127,6 @@ class Macro:
                 self._hover_key(pts["in1"], rod_key)                     # 낚싯대 되돌려 놓기
                 self.out(f"[수리] {c['repair_string_slot']}번 칸 실이 안 옮겨졌어 (실이 떨어졌거나 칸이 다름)")
                 return False
-            in2_full = crop_at(pts["in2"])                               # 실이 들어간 모양
             self._gui_click(pts["ok"])                                   # ✓ (골드 차감)
             self.sleep(0.8)
             # 여기서는 수리 됐는지 판단하지 않음 (창 모양만으로는 틀릴 수 있음).
@@ -1125,15 +1135,15 @@ class Macro:
             if not differs(crop_at(hot(c["repair_rod_slot"])), rod_empty):
                 self._hover_key(pts["in1"], rod_key)                     # 수리 안 됐으면 첫 칸에 그대로
             rod_back = differs(crop_at(hot(c["repair_rod_slot"])), rod_empty)
-            if not differs(crop_at(pts["in2"]), in2_full):               # 실이 남아 있으면 원래 칸으로
+            if differs(crop_at(pts["in2"]), in2_empty):                  # 실이 남아 있으면(빈 칸이 아니면) 원래 칸으로
                 self._hover_key(pts["in2"], str(c["repair_string_slot"]))
             if not rod_back:
                 self.out(f"[수리] 낚싯대를 {c['repair_rod_slot']}번 칸으로 못 꺼냈어 (모루 창을 확인해줘)")
                 return False
             return True
         finally:
-            if opened:
-                self.close_gui(face)
+            if face is not None and (opened or gui_overlay(face, self.view())):
+                self.close_gui(face)                 # 열렸다고 판단하기 전에 정지돼도 닫음
             winapi.send_mouse_move(-turn[0], -turn[1])
             time.sleep(0.5)
             self.press(rod_key)                      # 낚싯대를 손에 (다시 낚시할 수 있게)

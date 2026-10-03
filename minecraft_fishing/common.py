@@ -567,10 +567,6 @@ def slot_is_empty(img, slot):
     return float((np.abs(a - SLOT_EMPTY).max(axis=2) <= 6).mean()) >= 0.97
 
 
-def count_empty_slots(img, inv):
-    return sum(slot_is_empty(img, sl) for sl in inventory_slots(inv))
-
-
 def _glyph_of(seg, s):
     """흰 글자 덩어리 하나를 5x7 로 줄여 숫자/'/' 판별. 아니면 None."""
     h, w = seg.shape
@@ -686,34 +682,11 @@ def read_number(img):
     return int("".join(k for _, k in best))
 
 
-REPAIR_REF = {k: DATA_DIR / f"repair_{k}.png" for k in ("in1", "in2")}
-
-
 def turn_pixels(yaw_deg, pitch_deg, sens_pct):
     """마크 회전 공식: 마우스 1칸 = 0.15 x ((감도*0.6+0.2)^3 x 8) 도. 감도는 설정 화면 %/200."""
     s = sens_pct / 200
     deg = 0.15 * ((s * 0.6 + 0.2) ** 3 * 8)
     return round(yaw_deg / deg), round(pitch_deg / deg)
-
-
-def load_repair_refs():
-    out = {}
-    for k, p in REPAIR_REF.items():
-        try:
-            out[k] = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
-        except (OSError, ValueError):
-            out[k] = None
-    return out
-
-
-def save_repair_refs(img, points, half):
-    """수리 창이 비어 있을 때의 첫 칸/둘째 칸 모양을 저장 (수리됐는지 = 첫 칸이 다시 비었는지 비교용)."""
-    for k, p in REPAIR_REF.items():
-        x, y = points[k]
-        crop = img[max(0, y - half):y + half, max(0, x - half):x + half]
-        ok, buf = cv2.imencode(".png", crop)
-        if ok:
-            p.write_bytes(buf.tobytes())
 
 
 def detect_gui_scale(img):

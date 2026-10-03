@@ -419,6 +419,7 @@ if IS_WIN:
          wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
          wintypes.HINSTANCE, wintypes.LPVOID)
     _sig(user32, "DestroyWindow", wintypes.BOOL, wintypes.HWND)
+    _sig(user32, "UnregisterClassW", wintypes.BOOL, wintypes.LPCWSTR, wintypes.HINSTANCE)
     _sig(user32, "RegisterRawInputDevices", wintypes.BOOL, ctypes.POINTER(_RAWINPUTDEVICE), wintypes.UINT,
          wintypes.UINT)
     _sig(user32, "GetRawInputData", wintypes.UINT, wintypes.HANDLE, wintypes.UINT, wintypes.LPVOID,
@@ -449,6 +450,8 @@ def send_mouse_move(dx, dy, step=24, pause=0.004):
 
 class RawMouseRecorder:
     """원시 입력으로 마우스 실제 이동량(dx, dy)을 모음. 다른 창이 앞에 있어도 받음 (RIDEV_INPUTSINK)."""
+
+    _seq = 0
 
     def __init__(self):
         import threading
@@ -488,7 +491,8 @@ class RawMouseRecorder:
         self._tid = kernel32.GetCurrentThreadId()
         self._wndproc = _WNDPROC(self._proc)                       # 참조 유지 (GC 되면 튕김)
         hinst = kernel32.GetModuleHandleW(None)
-        name = f"FishRawRec{id(self)}"
+        RawMouseRecorder._seq += 1                                 # 매번 다른 이름 (id() 는 재사용될 수 있음)
+        name = f"FishRawRec{kernel32.GetCurrentThreadId()}_{RawMouseRecorder._seq}"
         wc = _WNDCLASSW(0, self._wndproc, 0, 0, hinst, None, None, None, None, name)
         user32.RegisterClassW(ctypes.byref(wc))
         hwnd = user32.CreateWindowExW(0, name, name, 0, 0, 0, 0, 0, None, None, hinst, None)
@@ -500,6 +504,7 @@ class RawMouseRecorder:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
         user32.DestroyWindow(hwnd)
+        user32.UnregisterClassW(name, hinst)                       # 창 클래스도 정리
 
 
 def read_mouse_sensitivity():
@@ -535,13 +540,15 @@ class KeyPoller:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def add(self, key, fn):
-        self.binds[self.VK[key]] = fn
+        vk = self.VK[key]
+        user32.GetAsyncKeyState(vk)      # '지난번 이후 눌림' 표시 비우기 (예전에 누른 게 바로 실행되지 않게)
+        self.down[vk] = False
+        self.binds = {**self.binds, vk: fn}   # 새 dict 로 바꿔 끼움 (도는 중인 스레드와 안 부딪히게)
         return self
 
     def start(self):
-        for vk in self.binds:
-            user32.GetAsyncKeyState(vk)  # '지난번 이후 눌림' 표시 비우기
-        self.thread.start()
+        if not self.thread.is_alive():
+            self.thread.start()
         return self
 
     def stop(self):
@@ -550,10 +557,12 @@ class KeyPoller:
     def _run(self):
         while not self.stop_ev.wait(self.interval):
             now = time.perf_counter()
-            for vk, fn in self.binds.items():
+            for vk, fn in list(self.binds.items()):
                 st = user32.GetAsyncKeyState(vk)
                 is_down = bool(st & 0x8000)
-                pressed = (is_down and not self.down.get(vk)) or (not is_down and st & 1)   # 아주 짧게 누른 것도
+                was_down = self.down.get(vk, False)
+                # 새로 눌림 / 확인 사이에 아주 짧게 눌렀다 뗌. 꾹 눌렀다 뗄 때(was_down)는 다시 실행 안 함
+                pressed = (is_down and not was_down) or (not is_down and not was_down and st & 1)
                 self.down[vk] = is_down
                 if pressed and now - self.last.get(vk, 0) >= self.gap:
                     self.last[vk] = now

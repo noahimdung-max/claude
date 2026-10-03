@@ -30,7 +30,7 @@ import keyboard
 
 from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
-                    subtitle_search_roi, view_roi, load_history, read_number, save_repair_refs,
+                    subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
 from fishing_macro import Macro
 import winapi
@@ -1827,8 +1827,6 @@ class App:
             for k in ("in1", "in2", "out"):
                 pts[k] = snap_slot(img, pts[k], pitch)
             pts["screen"] = [img.shape[1], img.shape[0]]
-            half = max(6, int(pitch * 0.4))                                  # 칸 크기의 약 0.8
-            save_repair_refs(img, pts, half)
             c["repair_points"] = pts
             save_config(c)
             self.log("수리 창 위치 지정 완료", "good")

@@ -421,10 +421,19 @@ class PixelStepper(tk.Frame):
         self.var.set(f"{v:.{self.dec}f}" if self.dec else str(int(round(v))))
 
 
+_POLLER = None
+
+
 def hotkey(key, fn, gap=0.4):
     """F7/F8/F12 단축키. add_hotkey 는 Alt+Tab 뒤에 Alt 를 계속 눌린 걸로 착각해서
     F8 이 'Alt+F8' 로 취급돼 안 먹는 문제가 있음 -> 다른 키 상태와 상관없이 그 키만 보고 반응.
-    꾹 누를 때 반복 입력은 gap 초 안이면 무시."""
+    꾹 누를 때 반복 입력은 gap 초 안이면 무시. 윈도우에선 키 상태를 직접 물어보는 방식(KeyPoller)."""
+    if IS_WIN:
+        global _POLLER
+        if _POLLER is None:
+            _POLLER = winapi.KeyPoller(gap=gap).start()
+        _POLLER.add(key, fn)
+        return
     last = [0.0]
 
     def on(e):

@@ -105,25 +105,26 @@ try:
     winapi.send_mouse_move(-300, -120)
     print("INFO options.txt sensitivity:", winapi.read_mouse_sensitivity(), flush=True)
 
-    # Alt+Tab 뒤처럼 Alt 가 눌린 상태여도 F8 단축키가 먹는지 (on_press_key 방식)
-    import keyboard
+    # Alt+Tab 뒤처럼 Alt 가 눌린 상태여도 F8 단축키가 먹는지 (KeyPoller: 키 상태를 직접 확인)
     hits = []
-    keyboard.on_press_key("f8", lambda e: hits.append(1), suppress=False)
-    old = []
-    keyboard.add_hotkey("f8", lambda: old.append(1))
+    poller = winapi.KeyPoller().add("f8", lambda: hits.append(1)).start()
     time.sleep(0.2)
-    kb = winapi.user32.keybd_event                 # 윈도우 입력으로 (keyboard 라이브러리는 자기가 보낸 키는 무시)
-    kb(0x12, 0x38, 0, 0)                           # Alt 누름
+    kb = winapi.user32.keybd_event
+    kb(0x12, 0x38, 0, 0)                           # Alt 누름 (계속 눌린 상태)
     time.sleep(0.1)
     kb(0x77, 0x42, 0, 0)                           # F8
-    time.sleep(0.05)
+    time.sleep(0.08)
     kb(0x77, 0x42, 2, 0)
     time.sleep(0.2)
     kb(0x12, 0x38, 2, 0)                           # Alt 뗌
+    time.sleep(0.5)
+    kb(0x77, 0x42, 0, 0)                           # 0.5초 뒤 한 번 더 (총 2번)
+    time.sleep(0.08)
+    kb(0x77, 0x42, 2, 0)
     time.sleep(0.2)
-    print(f"INFO f8 with alt held: on_press_key={len(hits)} add_hotkey={len(old)}", flush=True)
-    check("F8 hotkey fires while Alt is held", len(hits) >= 1, len(hits))
-    keyboard.unhook_all()
+    poller.stop()
+    print(f"INFO f8 presses seen: {len(hits)}", flush=True)
+    check("F8 hotkey fires while Alt is held and again after", len(hits) == 2, len(hits))
 
     prio, throttle = winapi.keep_awake(hwnd)
     check("keep_awake priority", prio)

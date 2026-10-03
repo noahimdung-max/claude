@@ -517,3 +517,51 @@ def read_mouse_sensitivity():
     except OSError:
         pass
     return sens, raw
+
+
+# ---------------------------------------------------------------- 단축키 (F7/F8/F12)
+class KeyPoller:
+    """키가 눌렸는지 윈도우에 직접 물어봄 (20ms 마다).
+    키보드 후킹(keyboard 라이브러리)은 Alt+Tab 뒤 Alt 가 계속 눌린 걸로 착각해 F8 을 'Alt+F8' 로 보는 문제가 있어서
+    다른 키 상태·어느 창이 앞에 있는지와 상관없이 그 키 하나만 봄."""
+    VK = {"f7": 0x76, "f8": 0x77, "f9": 0x78, "f12": 0x7B}
+
+    def __init__(self, interval=0.02, gap=0.4):
+        import threading
+        self.binds = {}                  # vk -> 콜백
+        self.interval, self.gap = interval, gap
+        self.down, self.last = {}, {}
+        self.stop_ev = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def add(self, key, fn):
+        self.binds[self.VK[key]] = fn
+        return self
+
+    def start(self):
+        for vk in self.binds:
+            user32.GetAsyncKeyState(vk)  # '지난번 이후 눌림' 표시 비우기
+        self.thread.start()
+        return self
+
+    def stop(self):
+        self.stop_ev.set()
+
+    def _run(self):
+        while not self.stop_ev.wait(self.interval):
+            now = time.perf_counter()
+            for vk, fn in self.binds.items():
+                st = user32.GetAsyncKeyState(vk)
+                is_down = bool(st & 0x8000)
+                pressed = (is_down and not self.down.get(vk)) or (not is_down and st & 1)   # 아주 짧게 누른 것도
+                self.down[vk] = is_down
+                if pressed and now - self.last.get(vk, 0) >= self.gap:
+                    self.last[vk] = now
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+
+
+if IS_WIN:
+    _sig(user32, "GetAsyncKeyState", ctypes.c_short, ctypes.c_int)

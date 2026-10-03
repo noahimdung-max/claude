@@ -51,6 +51,8 @@ DEFAULTS = {
     "repair_yaw": None,          # 기록 대신 각도로: 좌우(도, 오른쪽 +)
     "repair_pitch": 0,           # 위아래(도, 아래 +)
     "mouse_sens_pct": 100,       # 마크 마우스 감도 % (설정 화면 숫자)
+    "subtitle_scale": None,      # 자막 지정 때 마크 GUI 배율
+    "bar_scale": None,           # 미니게임 바 찾을 때 GUI 배율
     "rod_swap": False,           # 내구도 기준 아래면 다른 칸 낚싯대로 교체
     "rod_slots": [1, 2, 3],      # 낚싯대가 들어 있는 핫바 칸 (1~9)
     "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)
@@ -695,3 +697,46 @@ def save_repair_refs(img, points, half):
         ok, buf = cv2.imencode(".png", crop)
         if ok:
             p.write_bytes(buf.tobytes())
+
+
+def detect_gui_scale(img):
+    """화면에서 마크 GUI 배율 (핫바 선택 칸 테두리 = 24 GUI 픽셀). 못 찾으면 None."""
+    h, w = img.shape[:2]
+    sy = int(h * 0.7)
+    slot = selected_slot(img[sy:, int(w * 0.2):int(w * 0.8)])
+    return max(1, round(slot[2] / 24)) if slot else None
+
+
+def snap_slot(img, pt, pitch):
+    """클릭한 점을 그 칸의 진짜 가운데로 맞춤 (칸 테두리를 눌렀거나 살짝 빗나가도).
+    점 주변에서 칸 바탕색(가장 흔한 색) 덩어리를 찾아 그 가운데."""
+    x, y = int(pt[0]), int(pt[1])
+    r = max(4, int(pitch * 0.7))
+    x0, y0 = max(0, x - r), max(0, y - r)
+    crop = img[y0:y + r, x0:x + r]
+    if crop.size == 0:
+        return [x, y]
+    q = (crop.astype(np.int16) // 8)
+    key = q[..., 0] * 1024 + q[..., 1] * 32 + q[..., 2]
+    c = key[key.shape[0] // 4: 3 * key.shape[0] // 4, key.shape[1] // 4: 3 * key.shape[1] // 4]
+    vals, cnt = np.unique(c, return_counts=True)
+    mode = vals[int(np.argmax(cnt))]
+    m = (key == mode).astype(np.uint8)
+    n, lab, st, cent = cv2.connectedComponentsWithStats(m)
+    best, bd = None, 1e9
+    for i in range(1, n):
+        bw, bh, area = st[i, 2], st[i, 3], st[i, 4]
+        if area < 0.15 * pitch * pitch or bw > 1.3 * pitch or bh > 1.3 * pitch:
+            continue                                   # 칸 하나 크기쯤인 덩어리만
+        cx, cy = st[i, 0] + bw / 2 + x0, st[i, 1] + bh / 2 + y0
+        d = (cx - x) ** 2 + (cy - y) ** 2
+        if d < bd:
+            best, bd = [int(round(cx)), int(round(cy))], d
+    return best if best and bd <= (0.8 * pitch) ** 2 else [x, y]
+
+
+def hotbar_points(img, p1, p9):
+    """핫바 1번·9번 칸 클릭 -> 9칸 가운데 전부 (같은 줄로 맞추고 칸마다 정확히 맞춤)."""
+    pitch = abs(p9[0] - p1[0]) / 8
+    y = (p1[1] + p9[1]) / 2                            # 1번·9번 높이가 살짝 달라도 같은 줄
+    return [snap_slot(img, (p1[0] + (p9[0] - p1[0]) * k / 8, y), pitch) for k in range(9)]

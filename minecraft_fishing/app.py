@@ -30,7 +30,8 @@ import keyboard
 
 from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
-                    subtitle_search_roi, view_roi, load_history, read_number, save_repair_refs)
+                    subtitle_search_roi, view_roi, load_history, read_number, save_repair_refs,
+                    hotbar_points, snap_slot, detect_gui_scale)
 from fishing_macro import Macro
 import winapi
 from winapi import IS_WIN
@@ -855,7 +856,7 @@ class App:
         ]),
         ("잘 낚이게 하는 마크 설정", [
             "파티클: 최소  (물보라·거품이 찌/화면 판정을 방해함)",
-            "GUI 크기는 지정할 때와 같게 유지 (바꾸면 바 '자동' 다시)",
+            "GUI 배율이 바뀌면(자동 배율은 창 크기 따라 바뀜) 자막·바는 자동으로 맞춤. 안 맞으면 다시 지정",
             "밤·물속처럼 어두우면 찌 화면 모드는 어려움 → 자막 모드 사용",
             "낚싯대는 핫바에서 선택한 상태로, 물을 바라보고 시작",
         ]),
@@ -1817,7 +1818,15 @@ class App:
                 if not pt:
                     return
                 pts[k] = [int(pt[0]), int(pt[1])]
-            half = max(6, int(abs(pts["hot9"][0] - pts["hot1"][0]) / 8 * 0.4))   # 칸 크기의 약 0.8
+            if abs(pts["hot9"][0] - pts["hot1"][0]) < 40:
+                messagebox.showwarning("수리 창", "핫바 1번과 9번 칸을 다시 확인해줘 (너무 가까워)")
+                return
+            pitch = abs(pts["hot9"][0] - pts["hot1"][0]) / 8
+            pts["hot"] = hotbar_points(img, pts["hot1"], pts["hot9"])        # 9칸 다 정확한 가운데로
+            for k in ("in1", "in2", "out"):
+                pts[k] = snap_slot(img, pts[k], pitch)
+            pts["screen"] = [img.shape[1], img.shape[0]]
+            half = max(6, int(pitch * 0.4))                                  # 칸 크기의 약 0.8
             save_repair_refs(img, pts, half)
             c["repair_points"] = pts
             save_config(c)
@@ -1839,6 +1848,7 @@ class App:
                 messagebox.showwarning("확인", "너무 작게 잡혔어. 자막 글자 한 줄 전체를 감싸줘.")
                 return
             save_subtitle_template(tmpl)
+            c["subtitle_scale"] = detect_gui_scale(img)     # 이 배율 기준 (배율이 바뀌면 자동으로 맞춤)
             c["subtitle_roi"] = subtitle_search_roi([x + tx, y + ty, tw, th], img.shape[1], img.shape[0])
             if self.macro:
                 self.macro.sub_tmpl = None
@@ -1897,6 +1907,7 @@ class App:
             if not ok:
                 return
             c["bar_roi"] = roi
+            c["bar_scale"] = detect_gui_scale(img)
             if self.macro:
                 self.macro.zone_w, self.macro.prev_zone = 0, None
             self.log("미니게임 바 직접 지정 완료!", "good")

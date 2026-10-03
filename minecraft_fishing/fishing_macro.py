@@ -254,6 +254,33 @@ class Macro:
                 winapi.bring_to_front(self.hwnd)
                 time.sleep(0.3)
         self.io_ready = True
+        self.adapt_gui_scale()
+
+    def adapt_gui_scale(self):
+        """마크 GUI 배율이 설정 때와 다르면 (자동 배율은 창 크기 따라 바뀜) 자막 위치·크기를 비율대로 맞추고
+        미니게임 바는 다시 자동으로 찾게 함."""
+        c = self.cfg
+        self.sub_roi, self.sub_scale_ratio = None, 1.0
+        try:
+            cur = self.hotbar_slot() and self.gui_scale
+        except Exception:
+            cur = None
+        if not cur:
+            return
+        old = c.get("subtitle_scale")
+        if old and old != cur and c["subtitle_roi"]:
+            r = cur / old
+            W, H = self.screen.mon["width"], self.screen.mon["height"]
+            x, y, w, h = c["subtitle_roi"]            # 자막은 화면 오른쪽 아래 기준으로 커짐/작아짐
+            self.sub_roi = [int(W - (W - x) * r), int(H - (H - y) * r), max(1, int(w * r)), max(1, int(h * r))]
+            self.sub_scale_ratio = r
+            self.sub_tmpl = None
+            self.out(f"[알림] 마크 GUI 배율이 자막 지정 때({old})와 달라({cur}) -> 자동으로 맞춤. "
+                     "입질을 못 잡으면 자막을 다시 지정해줘")
+        if c.get("bar_scale") and c["bar_scale"] != cur and c["bar_roi"]:
+            c["bar_roi"] = None                     # 바 위치는 배율 따라 달라짐 -> 다음 미니게임 때 다시 찾음
+            self.out(f"[알림] GUI 배율이 바뀌어서({c['bar_scale']} -> {cur}) 미니게임 바를 다시 찾을게")
+        c["bar_scale"] = cur
 
     def right_click(self):
         self.logger.write("KEY", "우클릭")
@@ -362,6 +389,8 @@ class Macro:
             return False
         x, y, w, h = found
         self.cfg["bar_roi"] = [sx + x, sy + y, w, h]
+        if self.gui_scale:
+            self.cfg["bar_scale"] = self.gui_scale
         save_config(self.cfg)
         self.out(f"[바 위치 자동 감지] {self.cfg['bar_roi']} 저장됨")
         return True
@@ -437,7 +466,11 @@ class Macro:
     # ---------- 자막 ----------
     def subtitle_template(self):
         if self.sub_tmpl is None:
-            self.sub_tmpl = load_subtitle_template()
+            t = load_subtitle_template()
+            r = getattr(self, "sub_scale_ratio", 1.0)
+            if t is not None and abs(r - 1) > 0.01:
+                t = cv2.resize(t, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
+            self.sub_tmpl = t
         return self.sub_tmpl
 
     def subtitle_score(self):
@@ -446,7 +479,7 @@ class Macro:
         if t is None or not c["subtitle_roi"]:
             self.stats["sub"] = None
             return None
-        s = match_score(self.screen.grab(c["subtitle_roi"]), t)
+        s = match_score(self.screen.grab(getattr(self, "sub_roi", None) or c["subtitle_roi"]), t)
         self.stats["sub"] = s
         return s
 
@@ -965,7 +998,29 @@ class Macro:
         refs = load_repair_refs()
         rod_key = str(c["repair_rod_slot"])
         h1, h9 = pts["hot1"], pts["hot9"]
-        hot = lambda n: (h1[0] + (h9[0] - h1[0]) * (n - 1) / 8, h1[1] + (h9[1] - h1[1]) * (n - 1) / 8)
+        if pts.get("hot"):
+            hot = lambda n: pts["hot"][n - 1]
+        else:
+            hot = lambda n: (h1[0] + (h9[0] - h1[0]) * (n - 1) / 8, h1[1] + (h9[1] - h1[1]) * (n - 1) / 8)
+        pitch = abs(h9[0] - h1[0]) / 8
+        W, H = self.screen.mon["width"], self.screen.mon["height"]
+        if pts.get("screen") and list(pts["screen"]) != [W, H]:
+            self.stop_with("화면(창) 크기가 수리 창 위치 지정 때와 달라 -> '수리 창 위치 지정'을 다시 해줘")
+        if self.hotbar_slot() and self.gui_scale and abs(self.gui_scale * 18 - pitch) > 0.2 * pitch:
+            self.stop_with(f"마크 GUI 배율이 수리 창 위치 지정 때와 달라 (지금 {self.gui_scale}) -> 다시 지정해줘")
+
+        def moved(n, shift=True):
+            """n번 칸 아이템을 Shift+클릭. 칸 모양이 바뀌었는지 확인하고 안 바뀌면 한 번 더."""
+            x, y = hot(n)
+            half = max(4, int(pitch * 0.35))
+            for attempt in range(2):
+                before_c = self.screen.full()[int(y) - half:int(y) + half, int(x) - half:int(x) + half].astype(np.int16)
+                self._gui_click((x, y), shift=shift)
+                after_c = self.screen.full()[int(y) - half:int(y) + half, int(x) - half:int(x) + half]
+                if before_c.shape == after_c.shape and np.abs(before_c - after_c).mean() > 6:
+                    return True
+                self.sleep(0.3)
+            return False
 
         self.state = "모루로 수리하러 가는 중"
         self.set_shift(False)
@@ -987,8 +1042,13 @@ class Macro:
                 return False
             self.sleep(0.4)
             self.state = "수리 중"
-            self._gui_click(hot(c["repair_rod_slot"]), shift=True)      # 낚싯대 -> 수리 칸
-            self._gui_click(hot(c["repair_string_slot"]), shift=True)   # 실 -> 재료 칸
+            if not moved(c["repair_rod_slot"]):                          # 낚싯대 -> 수리 칸
+                self.out(f"[수리] {c['repair_rod_slot']}번 칸 낚싯대가 안 옮겨졌어 (그 칸에 낚싯대가 있는지 확인)")
+                return False
+            if not moved(c["repair_string_slot"]):                       # 실 -> 재료 칸
+                self._hover_key(pts["in1"], rod_key)                     # 낚싯대 되돌려 놓기
+                self.out(f"[수리] {c['repair_string_slot']}번 칸 실이 안 옮겨졌어 (실이 떨어졌거나 칸이 다름)")
+                return False
             self._gui_click(pts["ok"])                                   # ✓ (골드 차감)
             self.sleep(0.6)
             img = self.screen.full()

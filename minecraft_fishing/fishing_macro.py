@@ -22,7 +22,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    screen_changed, save_debug_image, hotbar_index)
+                    screen_changed, save_debug_image, read_number, turn_pixels, load_repair_refs, hotbar_index)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -905,6 +905,118 @@ class Macro:
             return None
         return max(0, e["cur"] - (self.run_caught - e["at"])), e["max"], self.run_caught == e["at"]
 
+    # ---------- 모루 자동 수리 ----------
+    def turn_amount(self):
+        """물 -> 모루 마우스 이동량 (dx, dy). 기록한 값, 없으면 각도+감도로 계산."""
+        c = self.cfg
+        if c.get("repair_turn"):
+            return tuple(c["repair_turn"])
+        if c.get("repair_yaw") is not None and c.get("mouse_sens_pct"):
+            return turn_pixels(c["repair_yaw"], c.get("repair_pitch", 0), c["mouse_sens_pct"])
+        return None
+
+    def read_gold(self):
+        roi = self.cfg.get("gold_roi")
+        return read_number(self.screen.grab(roi)) if roi else None
+
+    def _gui_click(self, pt, shift=False):
+        pydirectinput.moveTo(int(pt[0]), int(pt[1]))
+        time.sleep(0.08)
+        if shift:
+            pydirectinput.keyDown("shift")
+            time.sleep(0.03)
+        pydirectinput.click()
+        if shift:
+            time.sleep(0.03)
+            pydirectinput.keyUp("shift")
+        self.sleep(0.25)
+
+    def _hover_key(self, pt, key):
+        """칸 위에 마우스 올리고 숫자키 = 그 칸 아이템을 핫바 그 번호 칸으로 (마크 기본 기능)."""
+        pydirectinput.moveTo(int(pt[0]), int(pt[1]))
+        time.sleep(0.08)
+        pydirectinput.press(key)
+        self.sleep(0.25)
+
+    def _slot_like(self, img, pt, ref):
+        """칸(pt) 모양이 기준 이미지(ref)와 비슷한지 (빈 칸인지 확인용)."""
+        if ref is None:
+            return None
+        h, w = ref.shape[:2]
+        x, y = int(pt[0]) - w // 2, int(pt[1]) - h // 2
+        crop = img[max(0, y):y + h, max(0, x):x + w]
+        if crop.shape != ref.shape:
+            return None
+        return float(np.abs(crop.astype(np.int16) - ref).mean()) < 18
+
+    def repair_rod(self):
+        """모루 자동 수리: 시점 돌려 모루 열기 -> 낚싯대·실 Shift+클릭 -> ✓ -> 수리된 낚싯대를 원래 칸으로 -> 닫고 되돌아옴.
+        반환 True = 수리 성공. 실패하면 알림 + 정지."""
+        c = self.cfg
+        pts, turn = c.get("repair_points"), self.turn_amount()
+        if self.bg_mode or not self._front():
+            self.stop_with("자동 수리는 일반 모드(마크 창이 앞에 있을 때)에서만 돼 -> 정지")
+        if not pts or not turn:
+            self.stop_with("자동 수리 설정이 덜 됐어 (낚싯대 탭: 모루 방향, 수리 창 위치) -> 정지")
+        gold = self.read_gold()
+        if gold is not None and gold < c["repair_cost"]:
+            self.stop_with(f"골드가 모자라서 수리 못 해 ({gold:,} < {c['repair_cost']:,}) -> 정지")
+        refs = load_repair_refs()
+        rod_key = str(c["repair_rod_slot"])
+        h1, h9 = pts["hot1"], pts["hot9"]
+        hot = lambda n: (h1[0] + (h9[0] - h1[0]) * (n - 1) / 8, h1[1] + (h9[1] - h1[1]) * (n - 1) / 8)
+
+        self.state = "모루로 수리하러 가는 중"
+        self.set_shift(False)
+        before = self.client_img()
+        winapi.send_mouse_move(*turn)
+        opened, ok = False, False
+        try:
+            self.sleep(0.4)
+            face = self.client_img()
+            self.right_click()
+            end = time.perf_counter() + 2.0
+            while time.perf_counter() < end:
+                self.sleep(0.1)
+                if screen_changed(face, self.client_img(), 10):
+                    opened = True
+                    break
+            if not opened:
+                self.out("[수리] 모루 창이 안 열렸어 (모루 방향을 다시 기록해줘)")
+                return False
+            self.sleep(0.4)
+            self.state = "수리 중"
+            self._gui_click(hot(c["repair_rod_slot"]), shift=True)      # 낚싯대 -> 수리 칸
+            self._gui_click(hot(c["repair_string_slot"]), shift=True)   # 실 -> 재료 칸
+            self._gui_click(pts["ok"])                                   # ✓ (골드 차감)
+            self.sleep(0.6)
+            img = self.screen.full()
+            done = self._slot_like(img, pts["in1"], refs.get("in1"))      # 수리되면 첫 칸이 빈 칸으로
+            if done is False:
+                # 수리 안 됨 (실/골드 부족) -> 낚싯대, 실 되돌려 놓기
+                self._hover_key(pts["in1"], rod_key)
+                if self._slot_like(img, pts["in2"], refs.get("in2")) is False:
+                    self._gui_click(pts["in2"], shift=True)
+                self.out("[수리] 수리가 안 됐어 (실이나 골드가 모자란 듯)")
+                return False
+            self._hover_key(pts["out"], rod_key)                         # 수리된 낚싯대 -> 원래 칸
+            if self._slot_like(self.screen.full(), pts["in2"], refs.get("in2")) is False:
+                self._gui_click(pts["in2"], shift=True)                  # 남은 실 돌려받기
+            ok = True
+            return True
+        finally:
+            if opened:
+                self.press("esc")
+                time.sleep(0.4)
+            winapi.send_mouse_move(-turn[0], -turn[1])
+            time.sleep(0.5)
+            if not screen_changed(before, self.client_img(), 14):
+                self.out("[수리] 낚시 자리로 돌아옴" + (" - 수리 완료!" if ok else ""))
+            elif self.running:
+                self.out("[수리] 원래 시점과 화면이 달라 보여 (확인해줘)")
+            self.exact = None
+            self.inv_due = True
+
     # ---------- 낚싯대 교체 ----------
     def swap_rod(self):
         """다음 낚싯대 칸으로. 남은 게 없으면 False."""
@@ -940,6 +1052,10 @@ class Macro:
             self.stop_with(f"목표 {c['goal_count']}마리 달성! -> 정지")
         if c["goal_minutes"] and self.stats["started"] and time.time() - self.stats["started"] >= c["goal_minutes"] * 60:
             self.stop_with(f"{c['goal_minutes']}분 지남 -> 정지")
+        if not self.durability_ok() and c.get("repair_on"):
+            if not self.repair_rod():
+                self.stop_with("자동 수리 실패 (실·골드가 모자라거나 모루를 못 열었어) -> 정지")
+            notify(c["discord_webhook"], "낚싯대 자동 수리 완료")
         if not self.durability_ok() and not (c["rod_swap"] and self.swap_rod()):
             if c["rod_swap"]:
                 self.stop_with("교체할 낚싯대가 더 없어 (모든 칸 내구도 부족) -> 정지")

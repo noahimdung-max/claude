@@ -41,6 +41,16 @@ DEFAULTS = {
     "inv_full_stop": False,      # 인벤 빈칸이 기준 이하면 멈춤
     "inv_min_empty": 0,          # 빈칸이 이 개수 이하면 '가득 참'
     "log_file": False,           # 세부 탭: exe 옆 macro.log 에 단계별 기록
+    "repair_on": False,          # (실험) 모루 자동 수리
+    "repair_rod_slot": 1,        # 수리할 낚싯대 핫바 칸
+    "repair_string_slot": 2,     # 실 핫바 칸
+    "repair_cost": 400,          # 수리비 (골드)
+    "repair_turn": None,         # [dx, dy] 물 -> 모루 마우스 이동량 (기록)
+    "repair_points": None,       # 수리 창 위치 {"in1","in2","ok","out","hot1","hot9": [x, y]} (화면 기준)
+    "gold_roi": None,            # 화면의 골드 숫자 영역
+    "repair_yaw": None,          # 기록 대신 각도로: 좌우(도, 오른쪽 +)
+    "repair_pitch": 0,           # 위아래(도, 아래 +)
+    "mouse_sens_pct": 100,       # 마크 마우스 감도 % (설정 화면 숫자)
     "rod_swap": False,           # 내구도 기준 아래면 다른 칸 낚싯대로 교체
     "rod_slots": [1, 2, 3],      # 낚싯대가 들어 있는 핫바 칸 (1~9)
     "background": False,         # True 면 다른 창 써도 낚시 (마크 창만 캡처/입력, F3+P 필요)
@@ -628,3 +638,60 @@ def hotbar_index(slot, client_w):
     s = w / 24
     left = client_w / 2 - 91 * s
     return int(min(8, max(0, round((x + w / 2 - left - 11 * s) / (20 * s)))))
+
+
+def read_number(img):
+    """HUD 숫자 읽기 (예: 골드 '30,979' -> 30979). 마크 글꼴 숫자만 골라 왼쪽부터. 못 읽으면 None.
+    글자가 어둡거나 옆에 밝은 아이콘이 있어도 되게 밝기 기준을 몇 단계로 바꿔 보고 숫자가 가장 많이 읽힌 걸 씀."""
+    if img is None or img.size == 0:
+        return None
+    v = img.astype(np.int16).max(axis=2)
+    best = []
+    for level in sorted(set(int(t) for t in np.unique(v) if t >= 40), reverse=True)[:40]:
+        mask = (v >= level * 0.85).astype(np.uint8)           # 그림자(1/4 밝기)는 빠짐
+        n, _, st, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        digits = []
+        for i in range(1, n):
+            x, y, w, h, _ = (int(t) for t in st[i])
+            sc = round(h / 7)
+            if sc < 1:
+                continue
+            k = _glyph_of(mask[y:y + h, x:x + w], sc)
+            if k and k.isdigit():
+                digits.append((x, k))
+        if len(digits) > len(best):
+            best = digits
+    if not best:
+        return None
+    best.sort()
+    return int("".join(k for _, k in best))
+
+
+REPAIR_REF = {k: DATA_DIR / f"repair_{k}.png" for k in ("in1", "in2")}
+
+
+def turn_pixels(yaw_deg, pitch_deg, sens_pct):
+    """마크 회전 공식: 마우스 1칸 = 0.15 x ((감도*0.6+0.2)^3 x 8) 도. 감도는 설정 화면 %/200."""
+    s = sens_pct / 200
+    deg = 0.15 * ((s * 0.6 + 0.2) ** 3 * 8)
+    return round(yaw_deg / deg), round(pitch_deg / deg)
+
+
+def load_repair_refs():
+    out = {}
+    for k, p in REPAIR_REF.items():
+        try:
+            out[k] = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
+        except (OSError, ValueError):
+            out[k] = None
+    return out
+
+
+def save_repair_refs(img, points, half):
+    """수리 창이 비어 있을 때의 첫 칸/둘째 칸 모양을 저장 (수리됐는지 = 첫 칸이 다시 비었는지 비교용)."""
+    for k, p in REPAIR_REF.items():
+        x, y = points[k]
+        crop = img[max(0, y - half):y + half, max(0, x - half):x + half]
+        ok, buf = cv2.imencode(".png", crop)
+        if ok:
+            p.write_bytes(buf.tobytes())

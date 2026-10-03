@@ -30,8 +30,10 @@ import keyboard
 
 from common import (SUBTITLE_PATH, Screen, find_bobber, bracket_mask, color_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
-                    subtitle_search_roi, view_roi, load_history)
+                    subtitle_search_roi, view_roi, load_history, read_number, save_repair_refs)
 from fishing_macro import Macro
+import winapi
+from winapi import IS_WIN
 
 HERE = Path(__file__).parent
 
@@ -626,8 +628,14 @@ class App:
         main.pack(fill="both", expand=True)
         side = tk.Frame(main, bg=SIDEBAR, width=SIDE_W)
         side.pack(side="left", fill="y")
-        area = tk.Frame(main, bg=SKY)
-        area.pack(side="left", fill="both", expand=True, padx=m, pady=(m, m))
+        # 페이지가 화면보다 길면 마우스 휠로 스크롤
+        self.scroll_cv = tk.Canvas(main, bg=SKY, width=PANEL_W, height=200, highlightthickness=0, bd=0)
+        self.scroll_cv.pack(side="left", fill="y", padx=m, pady=(m, m))
+        area = tk.Frame(self.scroll_cv, bg=SKY)
+        self.scroll_cv.create_window(0, 0, window=area, anchor="nw")
+        area.bind("<Configure>", lambda e: self.fit_scroll())
+        self.scroll_area = area
+        self.root.bind_all("<MouseWheel>", self.on_wheel)
         self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "log", "rod", "setup", "adv", "guide")}
         self.nav = {}
         for k, ic, text in (("fish", "fish", "낚시"), ("log", "book", "기록"), ("rod", "rod", "낚싯대"),
@@ -834,6 +842,14 @@ class App:
             "인벤 가득 참: 빈칸 기준 이하면 멈추고 디스코드 알림. 인벤 확인 때 같이 셈",
             "리소스팩으로 인벤/툴팁 모양이 바뀌면 안 될 수 있음 → '툴팁 숫자 못 읽음'이 뜨면 꺼줘",
         ]),
+        ("모루 자동 수리 (실험)", [
+            "모루는 낚시 자리 바로 뒤(뒤돌면 십자선에 걸리게) 1~2칸에 두는 걸 추천",
+            "낚싯대 탭 → 낚싯대 칸·실 칸 고르기 → '방향 기록하기': 물 보고 F7, 모루 보고 F7",
+            "또는 감도 %(마크 설정 숫자)와 각도(뒤돌기 = 180) 넣고 '각도로 쓰기'",
+            "모루 창을 빈 상태로 열고 '수리 창 위치 지정' → F7 → 칸 6곳 클릭",
+            "'골드 숫자 영역'을 지정하면 수리비보다 적을 때 미리 멈추고 알림",
+            "마크 설정 > 마우스 > 원시 입력 켜짐 필요. 일반 모드에서만 됨",
+        ]),
         ("다른 창 쓰면서 낚시 (실험)", [
             "마크에서 F3+P 한 번 → '포커스를 잃으면 일시정지' 꺼짐",
             "마크 창은 최소화하지 말고 다른 창 뒤에 두기만",
@@ -860,6 +876,23 @@ class App:
                 label(row, "•", "b", fg=ACCENT).pack(side="left", anchor="n", padx=(0, 6 * S))
                 label(row, ln, anchor="w", justify="left", wraplength=PANEL_W - 60 * S).pack(side="left", fill="x")
 
+    def fit_scroll(self):
+        """창 높이는 페이지 길이에 맞추되 화면보다 길면 잘라서 스크롤."""
+        cv = self.scroll_cv
+        need = self.scroll_area.winfo_reqheight()
+        room = self.root.winfo_screenheight() - 92 * S - 20 * S - 90      # 헤더·여백·작업표시줄
+        cv.configure(height=max(200, min(need, room)), scrollregion=(0, 0, PANEL_W, need))
+
+    def on_wheel(self, e):
+        try:
+            if e.widget.winfo_toplevel() is not self.root:
+                return                               # 다른 창(영역 지정 등)은 무시
+        except (tk.TclError, AttributeError):
+            return
+        cv = self.scroll_cv
+        if self.scroll_area.winfo_reqheight() > cv.winfo_height():
+            cv.yview_scroll(int(-e.delta / 120) * 3, "units")
+
     def show_page(self, key):
         self.page = key
         if key == "log":
@@ -870,6 +903,8 @@ class App:
             f.pack_forget()
             self.nav[k].select(k == key)
         self.pages[key].pack(fill="both", expand=True)
+        self.scroll_cv.yview_moveto(0)
+        self.root.after(10, self.fit_scroll)
 
     def toggle_top(self):
         self.topmost = not self.topmost
@@ -1023,6 +1058,9 @@ class App:
         while not self.q.empty():
             self.log(self.q.get())
 
+        if self.f7.is_set() and getattr(self, "turn_stage", 0):
+            self.f7.clear()
+            self.turn_record_f7()
         if self.f7.is_set():
             self.f7.clear()
             if self.waiting_item:
@@ -1137,6 +1175,54 @@ class App:
         self.eslot_cv.bind("<Button-1>", self.click_eslot)
         self.every_var.trace_add("write", lambda *a: self.save_rod())
 
+        # 모루 자동 수리
+        p = Panel(pg, "모루 자동 수리  (실험)", self.icons["chest"])
+        p.pack(pady=(8 * S, 0))
+        self.repair_var = tk.BooleanVar(value=c["repair_on"])
+        head(p, self.repair_var, "켜기 (내구도가 멈춤 기준 아래면 수리)", self.save_repair)
+        desc(p, "모루 쪽으로 시점을 돌려 수리 창을 열고, 낚싯대·실을 Shift+클릭 -> ✓ -> 수리된 낚싯대를 원래 칸으로 "
+                "-> 다시 물 쪽으로. 골드·실이 모자라면 멈추고 알림. 일반 모드에서만 됨")
+        self.rslot_cvs = {}
+        for key, name in (("repair_rod_slot", "낚싯대 칸"), ("repair_string_slot", "실 칸")):
+            r = tk.Frame(p.content, bg=PANEL)
+            r.pack(fill="x", pady=(6 * S, 0))
+            label(r, name, width=7, anchor="w").pack(side="left")
+            cv = tk.Canvas(r, width=W - 70 * S, height=28 * S, bg=PANEL, highlightthickness=0, cursor="hand2")
+            cv.pack(side="left")
+            cv.bind("<Button-1>", lambda e, k=key: self.click_rslot(k, e))
+            self.rslot_cvs[key] = cv
+        r = tk.Frame(p.content, bg=PANEL)
+        r.pack(fill="x", pady=(8 * S, 0))
+        label(r, "수리비").pack(side="left")
+        self.cost_var = tk.StringVar(value=str(c["repair_cost"]))
+        spinbox(r, self.cost_var, 0, 1000000, 50).pack(side="left", padx=(6 * S, 4 * S))
+        label(r, "골드").pack(side="left")
+        PixelButton(r, "골드 숫자 영역 (F7)", lambda: self.begin_set("gold")).pack(side="right")
+        self.cost_var.trace_add("write", lambda *a: self.save_repair())
+
+        label(p.content, "모루 방향: 기록하기 (추천) 또는 각도 입력", "b").pack(anchor="w", pady=(10 * S, 2 * S))
+        r = tk.Frame(p.content, bg=PANEL)
+        r.pack(fill="x")
+        PixelButton(r, "방향 기록하기 (F7 두 번)", self.start_turn_record, "green").pack(side="left")
+        PixelButton(r, "모루 보기 테스트", self.test_turn).pack(side="left", padx=(6 * S, 0))
+        r = tk.Frame(p.content, bg=PANEL)
+        r.pack(fill="x", pady=(6 * S, 0))
+        self.sens_var = tk.StringVar(value=str(c["mouse_sens_pct"]))
+        self.yaw_var = tk.StringVar(value="" if c["repair_yaw"] is None else str(c["repair_yaw"]))
+        self.pitch_var = tk.StringVar(value=str(c["repair_pitch"]))
+        for text, var, wdt in (("감도 %", self.sens_var, 4), ("좌우°", self.yaw_var, 5), ("위아래°", self.pitch_var, 4)):
+            label(r, text).pack(side="left", padx=(0, 3 * S))
+            tk.Entry(r, textvariable=var, width=wdt, font=FONTS["b"], justify="center", bg="#000000", fg="#ffffff",
+                     insertbackground="#ffffff", relief="flat", highlightthickness=1,
+                     highlightbackground="#a0a0a0").pack(side="left", padx=(0, 8 * S), ipady=2 * S)
+        PixelButton(r, "각도로 쓰기", self.use_angle).pack(side="right")
+        desc(p, "각도: 오른쪽·아래가 + (뒤돌기 = 180). 감도는 마크 설정 > 마우스 감도 숫자. DPI 는 상관없음")
+        r = tk.Frame(p.content, bg=PANEL)
+        r.pack(fill="x", pady=(8 * S, 0))
+        PixelButton(r, "수리 창 위치 지정 (F7)", lambda: self.begin_set("repair")).pack(side="left")
+        self.repair_lbl = label(p.content, "", fg=MUTED, wraplength=W, justify="left")
+        self.repair_lbl.pack(anchor="w", pady=(6 * S, 0))
+
         # 인벤토리
         p = Panel(pg, "인벤토리 가득 참", self.icons["chest"])
         p.pack(pady=(8 * S, 0))
@@ -1153,6 +1239,87 @@ class App:
         self.inv_lbl = label(p.content, "아직 확인 안 함", fg=MUTED)
         self.inv_lbl.pack(anchor="w", pady=(4 * S, 0))
         self.draw_rod_page()
+
+    def click_rslot(self, key, e):
+        n = int(e.x // (int(self.rslot_cvs[key]["width"]) / 9)) + 1
+        self.cfg[key] = min(9, max(1, n))
+        save_config(self.cfg)
+        self.draw_rod_page()
+
+    def save_repair(self):
+        c = self.cfg
+        c["repair_on"] = self.repair_var.get()
+        try:
+            c["repair_cost"] = max(0, int(float(self.cost_var.get() or 0)))
+        except ValueError:
+            pass
+        save_config(c)
+        if c["repair_on"] and c["background"]:
+            self.log("자동 수리는 일반 모드에서만 돼 ('다른 창 쓰면서 낚시'는 꺼줘)", "warn")
+        self.draw_rod_page()
+
+    def use_angle(self):
+        try:
+            sens = float(self.sens_var.get())
+            yaw = float(self.yaw_var.get())
+            pitch = float(self.pitch_var.get() or 0)
+        except ValueError:
+            messagebox.showwarning("모루 방향", "감도 %와 좌우 각도를 숫자로 넣어줘 (예: 69, 180)")
+            return
+        c = self.cfg
+        c["mouse_sens_pct"], c["repair_yaw"], c["repair_pitch"] = sens, yaw, pitch
+        c["repair_turn"] = None                      # 각도 방식으로
+        save_config(c)
+        from common import turn_pixels
+        dx, dy = turn_pixels(yaw, pitch, sens)
+        self.log(f"모루 방향: 각도로 설정 (좌우 {yaw:g}°, 위아래 {pitch:g}° = 마우스 {dx}, {dy})", "good")
+        self.draw_rod_page()
+
+    def start_turn_record(self):
+        if not IS_WIN:
+            messagebox.showinfo("모루 방향", "윈도우에서만 돼")
+            return
+        if self.macro and self.macro.running:
+            messagebox.showinfo("안내", "매크로를 먼저 정지해줘")
+            return
+        self.turn_stage = 1
+        self.f7.clear()
+        self.repair_lbl.config(text="▶ 마크에서 낚시하던 방향(물)을 보고 F7", fg=ACCENT)
+        self.log("모루 방향 기록: 물을 보고 F7 -> 모루를 십자선에 맞추고 F7", "warn")
+
+    def turn_record_f7(self):
+        if self.turn_stage == 1:
+            self.turn_rec = winapi.RawMouseRecorder().start()
+            self.turn_stage = 2
+            self.repair_lbl.config(text="▶ 이제 마우스로 모루를 십자선 가운데에 맞추고 F7", fg=ACCENT)
+        elif self.turn_stage == 2:
+            dx, dy = self.turn_rec.stop()
+            self.turn_stage = 0
+            c = self.cfg
+            c["repair_turn"] = [int(dx), int(dy)]
+            save_config(c)
+            self.log(f"모루 방향 기록 완료 (마우스 {dx}, {dy}). 마크에서 다시 물 쪽으로 돌려놔", "good")
+            self.draw_rod_page()
+
+    def test_turn(self):
+        if not self.macro or self.macro.running:
+            messagebox.showinfo("안내", "매크로가 정지된 상태에서 해줘")
+            return
+        turn = self.macro.turn_amount()
+        if not turn:
+            messagebox.showinfo("모루 방향", "먼저 방향을 기록하거나 각도를 넣어줘")
+            return
+        hwnd = winapi.find_minecraft()
+
+        def run():
+            if hwnd:
+                winapi.bring_to_front(hwnd)
+            time.sleep(0.6)
+            winapi.send_mouse_move(*turn)
+            time.sleep(2.0)
+            winapi.send_mouse_move(-turn[0], -turn[1])
+        threading.Thread(target=run, daemon=True).start()
+        self.log("모루 보기 테스트: 2초 동안 모루를 보고 다시 돌아와. 십자선이 모루에 있는지 봐줘", "warn")
 
     def click_eslot(self, e):
         k = int(e.x // (int(self.eslot_cv["width"]) / 10))
@@ -1224,6 +1391,32 @@ class App:
             if on:
                 cv.create_text(x0 + (bw - 6 * S) / 2, H - 6 * S, font=FONTS["r"], fill=MUTED,
                                text="다 씀" if i in dep else ("사용 중" if i == cur else "대기"))
+        for key, cv in self.rslot_cvs.items():       # 모루 수리: 낚싯대 칸 / 실 칸
+            cv.delete("all")
+            W, H = int(cv["width"]), int(cv["height"])
+            bw = W / 9
+            for k in range(1, 10):
+                x0 = (k - 1) * bw
+                if k == self.cfg[key]:
+                    bevel(cv, x0 + S, 0, x0 + bw - S, H, "#3f9a46")
+                    shadow_text(cv, x0 + bw / 2, H / 2, str(k), FONTS["b"])
+                else:
+                    slot(cv, x0 + S, 0, x0 + bw - S, H, fill="#8b8b8b")
+                    cv.create_text(x0 + bw / 2, H / 2, text=str(k), font=FONTS["r"], fill="#e8e8e8")
+        c = self.cfg
+        if not getattr(self, "turn_stage", 0):
+            parts = []
+            if c.get("repair_turn"):
+                parts.append(f"방향: 기록됨 ({c['repair_turn'][0]}, {c['repair_turn'][1]})")
+            elif c.get("repair_yaw") is not None:
+                parts.append(f"방향: 각도 {c['repair_yaw']:g}° / {c.get('repair_pitch', 0):g}°")
+            else:
+                parts.append("방향: 아직 없음")
+            parts.append("수리 창: " + ("지정됨" if c.get("repair_points") else "아직 없음"))
+            parts.append("골드 영역: " + ("지정됨" if c.get("gold_roi") else "없음 (확인 안 함)"))
+            ready = (c.get("repair_turn") or c.get("repair_yaw") is not None) and c.get("repair_points")
+            self.repair_lbl.config(text="  ·  ".join(parts), fg=OK if ready else MUTED)
+
         cv = self.eslot_cv                           # 정밀 내구도 칸 고르기: [자동] 1 ~ 9
         cv.delete("all")
         W, H = int(cv["width"]), int(cv["height"])
@@ -1557,6 +1750,8 @@ class App:
             return
         scenes = {k: sc for k, _, _, sc in self.ITEMS}
         scenes["bar"] = "미니게임 바가 떠 있을 때 (직접 낚시하면서)"
+        scenes["repair"] = "모루 수리 창을 연 상태 (낚싯대·실 넣기 전, 빈 창)"
+        scenes["gold"] = "골드 숫자가 보이는 게임 화면"
         scene = scenes[item]
         if self.capture_mode.get() == "file":
             path = filedialog.askopenfilename(title=f"{scene} 스크린샷",
@@ -1572,9 +1767,40 @@ class App:
         self.guide.config(text=f"▶ 게임에서 [{scene}] 장면을 띄우고 F7 !")
         self.guide.grid(row=self.guide_row, column=0, columnspan=4, sticky="we", pady=(6 * S, 0))
         self.log(f"F7 기다리는 중: {scene}", "warn")
+        if item in ("repair", "gold"):
+            self.repair_lbl.config(text=f"▶ 게임에서 [{scene}] 띄우고 F7", fg=ACCENT)
 
     def do_set(self, item, img):
         c = self.cfg
+        if item == "gold":
+            rect = ask_roi(self.root, img, "골드 숫자만 (예: 30,979) 감싸기")
+            if not rect:
+                return
+            x, y, w, h = rect
+            val = read_number(img[y:y + h, x:x + w])
+            c["gold_roi"] = rect
+            save_config(c)
+            self.log(f"골드 영역 지정: 지금 {val:,} 골드로 읽힘" if val is not None
+                     else "골드 숫자를 못 읽었어. 숫자만 딱 맞게 다시 감싸줘", "good" if val is not None else "warn")
+            self.draw_rod_page()
+            return
+        if item == "repair":
+            names = [("in1", "낚싯대 넣는 칸 (왼쪽 첫 칸)"), ("in2", "실 넣는 칸 (가운데 칸)"),
+                     ("out", "결과 칸 (화살표 오른쪽)"), ("ok", "✓ 수리 버튼"),
+                     ("hot1", "아래 핫바 1번 칸"), ("hot9", "아래 핫바 9번 칸")]
+            pts = {}
+            for i, (k, name) in enumerate(names):
+                pt = ask(self.root, img, f"[수리 창 {i + 1}/{len(names)}] {name} 가운데를 클릭", mode="point")
+                if not pt:
+                    return
+                pts[k] = [int(pt[0]), int(pt[1])]
+            half = max(6, int(abs(pts["hot9"][0] - pts["hot1"][0]) / 8 * 0.4))   # 칸 크기의 약 0.8
+            save_repair_refs(img, pts, half)
+            c["repair_points"] = pts
+            save_config(c)
+            self.log("수리 창 위치 지정 완료", "good")
+            self.draw_rod_page()
+            return
         if item == "subtitle":
             rect = ask_roi(self.root, img, "입질 자막 - '낚시찌 ... 첨벙' 글자 한 줄 전체 (화살표 < > 는 빼고)")
             if not rect:

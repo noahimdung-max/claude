@@ -112,11 +112,14 @@ try:
     old = []
     keyboard.add_hotkey("f8", lambda: old.append(1))
     time.sleep(0.2)
-    keyboard.press("alt")
+    kb = winapi.user32.keybd_event                 # 윈도우 입력으로 (keyboard 라이브러리는 자기가 보낸 키는 무시)
+    kb(0x12, 0x38, 0, 0)                           # Alt 누름
     time.sleep(0.1)
-    keyboard.press_and_release("f8")
+    kb(0x77, 0x42, 0, 0)                           # F8
+    time.sleep(0.05)
+    kb(0x77, 0x42, 2, 0)
     time.sleep(0.2)
-    keyboard.release("alt")
+    kb(0x12, 0x38, 2, 0)                           # Alt 뗌
     time.sleep(0.2)
     print(f"INFO f8 with alt held: on_press_key={len(hits)} add_hotkey={len(old)}", flush=True)
     check("F8 hotkey fires while Alt is held", len(hits) >= 1, len(hits))

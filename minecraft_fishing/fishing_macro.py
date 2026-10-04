@@ -23,7 +23,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH)
+                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -259,6 +259,7 @@ class Macro:
                 winapi.bring_to_front(self.hwnd)
                 time.sleep(0.3)
         self.io_ready = True
+        self.follow_window()
         self.adapt_gui_scale()
 
     def adapt_gui_scale(self):
@@ -276,9 +277,10 @@ class Macro:
         old = c.get("subtitle_scale")
         if old and old != cur and c["subtitle_roi"]:
             r = cur / old
-            W, H = self.screen.mon["width"], self.screen.mon["height"]
-            x, y, w, h = c["subtitle_roi"]            # 자막은 화면 오른쪽 아래 기준으로 커짐/작아짐
-            self.sub_roi = [int(W - (W - x) * r), int(H - (H - y) * r), max(1, int(w * r)), max(1, int(h * r))]
+            gx, gy, gw, gh = self.game_rect()
+            R, B = gx + gw, gy + gh
+            x, y, w, h = c["subtitle_roi"]            # 자막은 게임 화면 오른쪽 아래 기준으로 커짐/작아짐
+            self.sub_roi = [int(R - (R - x) * r), int(B - (B - y) * r), max(1, int(w * r)), max(1, int(h * r))]
             self.sub_scale_ratio = r
             self.sub_tmpl = None
             self.out(f"[알림] 마크 GUI 배율이 자막 지정 때({old})와 달라({cur}) -> 자동으로 맞춤. "
@@ -385,8 +387,8 @@ class Macro:
     def search_roi(self):
         if self.cfg["bar_search_roi"]:
             return self.cfg["bar_search_roi"]
-        w, h = self.screen.mon["width"], self.screen.mon["height"]
-        return [int(w * 0.2), int(h * 0.6), int(w * 0.6), int(h * 0.4)]
+        gx, gy, gw, gh = self.game_rect()
+        return [gx + int(gw * 0.2), gy + int(gh * 0.6), int(gw * 0.6), gh - int(gh * 0.6)]
 
     def find_bar(self, save_debug=False):
         """바 자동 탐색. 찾으면 config.json에 저장. 못 찾으면 save_debug 시 탐색 화면을 저장."""
@@ -503,9 +505,8 @@ class Macro:
 
     def auto_durability_roi(self):
         """핫바에서 선택된 칸(밝은 테두리)을 찾아 그 아래 내구도 줄 영역."""
-        w, h = self.screen.mon["width"], self.screen.mon["height"]
-        sx, sy = int(w * 0.2), int(h * 0.7)
-        slot = selected_slot(self.screen.grab([sx, sy, int(w * 0.6), h - sy]))
+        sx, sy, aw, ah = self.hotbar_area()
+        slot = selected_slot(self.screen.grab([sx, sy, aw, ah]))
         if not slot:
             return None
         x, y, sw, sh = slot
@@ -845,20 +846,89 @@ class Macro:
         self._slot_cache = (now, val)
         return val
 
+    def game_rect(self):
+        """마크 게임 화면(창 안쪽)의 [x, y, w, h] (캡처 좌표). 창을 못 찾으면 화면 전체."""
+        W, H = self.screen.mon["width"], self.screen.mon["height"]
+        if self.hwnd:
+            try:
+                x, y, w, h = winapi.client_rect(self.hwnd)
+                ox, oy = self._mon_origin()
+                if w >= 200 and h >= 150:
+                    return [x - ox, y - oy, w, h]
+            except Exception:
+                pass
+        return [0, 0, W, H]
+
+    def hotbar_area(self):
+        """핫바가 있을 만한 곳: 게임 화면 아래쪽 가운데."""
+        gx, gy, gw, gh = self.game_rect()
+        sx, sy = gx + int(gw * 0.2), gy + int(gh * 0.7)
+        return [sx, sy, int(gw * 0.6), gy + gh - sy]
+
     def _hotbar_slot(self):
-        w, h = self.screen.mon["width"], self.screen.mon["height"]
-        sx, sy = int(w * 0.2), int(h * 0.7)
-        slot = selected_slot(self.screen.grab([sx, sy, int(w * 0.6), h - sy]))
+        sx, sy, aw, ah = self.hotbar_area()
+        slot = selected_slot(self.screen.grab([sx, sy, aw, ah]))
         if not slot:
             return None
-        cw = w
-        if self.hwnd:
-            cx, _, cw, _ = winapi.client_rect(self.hwnd)
-            sx -= cx - self._mon_origin()[0]
+        gx, _, gw, _ = self.game_rect()
         x, y, sw, sh = slot
         self.gui_scale = max(1, round(sw / 24))          # 선택 칸 테두리 = 24 GUI 픽셀
-        self.stats["slot"] = hotbar_index((sx + x, y, sw, sh), cw) + 1
+        self.stats["slot"] = hotbar_index((sx - gx + x, y, sw, sh), gw) + 1
         return self.stats["slot"]
+
+    def window_changed(self):
+        """마크 창 크기·위치가 설정 때와 다르면 True (최대화/이전 크기로 등)."""
+        ref = self.cfg.get("ref_client")
+        return bool(ref) and self.hwnd is not None and self.game_rect() != list(ref)
+
+    def follow_window(self):
+        """마크 창이 바뀌었으면 지정해 둔 영역·수리 위치를 새 창에 맞게 옮김. 옮겼으면 True.
+        HUD 는 창의 가까운 끝(아래 가운데 핫바, 오른쪽 아래 자막 등)에 붙어 있고, 수리 창은 가운데 기준."""
+        c = self.cfg
+        if not self.hwnd:
+            self.hwnd = winapi.find_minecraft()
+        if not self.hwnd or winapi.is_minimized(self.hwnd):
+            return False
+        cur = self.game_rect()
+        ref = c.get("ref_client")
+        self._slot_cache = None
+        try:
+            now_gui = self._hotbar_slot() and self.gui_scale
+        except Exception:
+            now_gui = None
+        if cur[2] < 200 or cur[3] < 150 or not winapi.client_rect(self.hwnd)[2]:
+            return False
+        if not ref:
+            c["ref_client"], c["ref_gui"] = cur, now_gui
+            save_config(c)
+            return False
+        if list(ref) == cur:
+            if now_gui and not c.get("ref_gui"):
+                c["ref_gui"] = now_gui
+                save_config(c)
+            return False
+        old_gui = c.get("ref_gui")
+        r = now_gui / old_gui if now_gui and old_gui else 1.0
+        for k in ("durability_roi", "gold_roi", "bar_search_roi"):
+            if c.get(k):
+                c[k] = remap_rect(c[k], ref, cur, r)
+        if c.get("subtitle_roi"):                         # 자막 크기는 adapt_gui_scale 이 배율대로 맞춤
+            c["subtitle_roi"] = remap_rect(c["subtitle_roi"], ref, cur, 1.0)
+        if c.get("bobber_roi"):                           # 게임 속 화면: 가운데 기준, 창 높이에 비례
+            c["bobber_roi"] = remap_rect(c["bobber_roi"], ref, cur, cur[3] / ref[3], "mid")
+        c["bar_roi"] = None                               # 미니게임 바는 다음 판에 다시 찾음
+        pts = c.get("repair_points")
+        if pts:                                           # 수리 창(GUI)은 창 가운데 기준
+            for k in ("in1", "in2", "out", "ok", "hot1", "hot9"):
+                if pts.get(k):
+                    pts[k] = remap_point(pts[k], ref, cur, r, "mid")
+            if pts.get("hot"):
+                pts["hot"] = [remap_point(p, ref, cur, r, "mid") for p in pts["hot"]]
+            pts["screen"] = [self.screen.mon["width"], self.screen.mon["height"]]
+        c["ref_client"], c["ref_gui"] = cur, now_gui or old_gui
+        save_config(c)
+        self.out(f"[알림] 마크 창 크기가 바뀌어서 ({ref[2]}x{ref[3]} -> {cur[2]}x{cur[3]}) 지정한 위치들을 새 창에 맞춤")
+        return True
 
     # ---------- 인벤 확인 (정밀 내구도 / 빈칸) ----------
     def inventory_check(self):
@@ -1108,9 +1178,6 @@ class Macro:
         else:
             hot = lambda n: (h1[0] + (h9[0] - h1[0]) * (n - 1) / 8, h1[1] + (h9[1] - h1[1]) * (n - 1) / 8)
         pitch = abs(h9[0] - h1[0]) / 8
-        W, H = self.screen.mon["width"], self.screen.mon["height"]
-        if pts.get("screen") and list(pts["screen"]) != [W, H]:
-            self.stop_with("화면(창) 크기가 수리 창 위치 지정 때와 달라 -> '수리 창 위치 지정'을 다시 해줘")
         if self.hotbar_slot() and self.gui_scale and abs(self.gui_scale * 18 - pitch) > 0.2 * pitch:
             self.stop_with(f"마크 GUI 배율이 수리 창 위치 지정 때와 달라 (지금 {self.gui_scale}) -> 다시 지정해줘")
 
@@ -1155,7 +1222,7 @@ class Macro:
                 self.sleep(0.1)
                 if gui_overlay(face, self.client_img()):
                     opened = True
-                    if not ANVIL_PATH.exists():          # 각도 방식: 처음 열린 모루 화면을 기준으로 저장
+                    if anvil is None or anvil.shape != face.shape:   # 처음이거나 창 크기가 바뀜: 열린 모루 화면을 기준으로
                         cv2.imencode(".png", face)[1].tofile(str(ANVIL_PATH))
                     break
             if not opened:
@@ -1231,6 +1298,11 @@ class Macro:
 
     def cycle(self):
         c = self.cfg
+        if self.window_changed():                     # 최대화/이전 크기로 -> 지정한 위치들을 새 창에 맞춤
+            if self.bg_mode:
+                self.setup_io()                       # 창 캡처도 새 크기로 다시 잡음 (안에서 follow_window)
+            elif self.follow_window():
+                self.adapt_gui_scale()
         if self._hist_t is None:
             self._hist_t = time.time()
         if self.inv_due and (c["exact_durability"] or c["inv_full_stop"]) and not getattr(self, "inv_off", False):

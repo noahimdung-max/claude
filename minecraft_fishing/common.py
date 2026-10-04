@@ -29,7 +29,9 @@ DEFAULTS = {
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
     "sneak_key": "shift",
-    "win_h": None,               # 프로그램 창 높이 (사용자가 조절한 값)        # 미니게임 웅크리기 키: shift / ctrl
+    "win_h": None,
+    "ref_client": None,          # 위치들을 지정할 때 마크 창 [x, y, w, h] (창이 바뀌면 이걸 기준으로 옮김)
+    "ref_gui": None,             # 그때 GUI 배율               # 프로그램 창 높이 (사용자가 조절한 값)        # 미니게임 웅크리기 키: shift / ctrl
     "durability_roi": None,      # [x, y, w, h] 핫바 낚싯대 칸의 내구도 줄만
     "durability_max": 64,        # 낚싯대 최대 내구도
     "durability_stop_pct": 20,   # 내구도가 최대의 이 % 이하가 되면 멈춤
@@ -711,6 +713,32 @@ def view_focal_px(height, fov=70):
     """마크 시야(FOV, 세로)로 화면 1도당 픽셀 계산용 초점거리(px)."""
     import math
     return (height / 2) / math.tan(math.radians(fov) / 2)
+
+
+def _remap_axis(c, old_size, new_size, r, anchor=None):
+    """한 축 좌표 c (창 안쪽 기준)를 창 크기가 old -> new 로 바뀐 뒤 위치로.
+    마크 HUD 는 가까운 끝(왼/위, 가운데, 오른/아래)에 붙어 있음 -> 3등분으로 판단. r = GUI 배율 변화."""
+    if anchor is None:
+        anchor = "lo" if c < old_size / 3 else "hi" if c > old_size * 2 / 3 else "mid"
+    if anchor == "lo":
+        return c * r
+    if anchor == "hi":
+        return new_size - (old_size - c) * r
+    return new_size / 2 + (c - old_size / 2) * r
+
+
+def remap_rect(roi, old, new, r=1.0, anchor=None):
+    """화면 영역 [x, y, w, h] 를 마크 창(old -> new, 둘 다 [x, y, w, h])에 맞춰 옮김."""
+    x, y, w, h = roi
+    cx = _remap_axis(x + w / 2 - old[0], old[2], new[2], r, anchor)
+    cy = _remap_axis(y + h / 2 - old[1], old[3], new[3], r, anchor)
+    nw, nh = max(1, w * r), max(1, h * r)
+    return [int(round(new[0] + cx - nw / 2)), int(round(new[1] + cy - nh / 2)), int(round(nw)), int(round(nh))]
+
+
+def remap_point(pt, old, new, r=1.0, anchor=None):
+    return [int(round(new[0] + _remap_axis(pt[0] - old[0], old[2], new[2], r, anchor))),
+            int(round(new[1] + _remap_axis(pt[1] - old[1], old[3], new[3], r, anchor)))]
 
 
 def detect_gui_scale(img):

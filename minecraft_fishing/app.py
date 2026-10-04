@@ -1842,8 +1842,17 @@ class App:
         if item in ("repair", "gold"):
             self.repair_lbl.config(text=f"▶ 게임에서 [{scene}] 띄우고 F7", fg=ACCENT)
 
+    def sync_window(self):
+        """지정 전에: 마크 창이 예전과 다르면 이미 지정한 위치들을 지금 창에 맞춰 둠 (새로 지정하는 것과 기준을 같게)."""
+        if IS_WIN and self.macro and not self.macro.running:
+            try:
+                self.macro.follow_window()
+            except Exception:
+                pass
+
     def do_set(self, item, img):
         c = self.cfg
+        self.sync_window()
         if item == "gold":
             rect = ask_roi(self.root, img, "골드 숫자만 (예: 30,979) 감싸기")
             if not rect:

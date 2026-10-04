@@ -617,7 +617,7 @@ class App:
         setup_fonts(self.root)
         self.root.title("마크 낚시 매크로")
         self.root.configure(bg=SKY)
-        self.root.resizable(False, False)
+        self.root.resizable(False, True)             # 세로 크기 조절 (창 아래 끝을 끌기)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.icons = {k: sprite(k, 2 * S) for k in SPRITES}
         self.icons_big = {k: sprite(k, 3 * S) for k in ("fish", "bobber")}
@@ -628,6 +628,7 @@ class App:
 
         self.build()
         self.show_page("fish")
+        self.init_size()
 
         self.macro = None
         threading.Thread(target=self.worker, daemon=True).start()
@@ -653,10 +654,14 @@ class App:
         side.pack(side="left", fill="y")
         # 페이지가 화면보다 길면 마우스 휠로 스크롤
         self.scroll_cv = tk.Canvas(main, bg=SKY, width=PANEL_W, height=200, highlightthickness=0, bd=0)
-        self.scroll_cv.pack(side="left", fill="y", padx=m, pady=(m, m))
+        self.scroll_bar = tk.Scrollbar(main, orient="vertical", command=self.scroll_cv.yview)
+        self.scroll_bar.pack(side="right", fill="y")
+        self.scroll_cv.configure(yscrollcommand=self.scroll_bar.set)
+        self.scroll_cv.pack(side="left", fill="both", expand=True, padx=m, pady=(m, m))
         area = tk.Frame(self.scroll_cv, bg=SKY)
         self.scroll_cv.create_window(0, 0, window=area, anchor="nw")
         area.bind("<Configure>", lambda e: self.fit_scroll())
+        self.scroll_cv.bind("<Configure>", lambda e: self.fit_scroll())
         self.scroll_area = area
         self.root.bind_all("<MouseWheel>", self.on_wheel)
         self.pages = {k: tk.Frame(area, bg=SKY) for k in ("fish", "log", "rod", "setup", "adv", "guide")}
@@ -907,11 +912,22 @@ class App:
                 label(row, ln, anchor="w", justify="left", wraplength=PANEL_W - 60 * S).pack(side="left", fill="x")
 
     def fit_scroll(self):
-        """창 높이는 페이지 길이에 맞추되 화면보다 길면 잘라서 스크롤."""
+        """페이지 길이만큼 스크롤 범위. 창 크기는 사용자가 조절 (페이지가 길면 휠·스크롤바로 내려봄)."""
         cv = self.scroll_cv
         need = self.scroll_area.winfo_reqheight()
-        room = self.root.winfo_screenheight() - 92 * S - 20 * S - 90      # 헤더·여백·작업표시줄
-        cv.configure(height=max(200, min(need, room)), scrollregion=(0, 0, PANEL_W, need))
+        cv.configure(scrollregion=(0, 0, PANEL_W, max(need, cv.winfo_height())))
+
+    def init_size(self):
+        """처음 창 크기: 저장해 둔 높이, 없으면 낚시 페이지가 다 보이게 (화면보다 크면 화면에 맞춤)."""
+        self.root.update_idletasks()
+        cv = self.scroll_cv
+        overhead = self.root.winfo_reqheight() - cv.winfo_reqheight()
+        room = self.root.winfo_screenheight() - 90                       # 작업표시줄·제목줄
+        want = self.cfg.get("win_h") or overhead + self.scroll_area.winfo_reqheight()
+        h = max(overhead + 150 * S, min(int(want), room))
+        w = self.root.winfo_reqwidth()
+        self.root.minsize(w, overhead + 150 * S)
+        self.root.geometry(f"{w}x{h}")
 
     def on_wheel(self, e):
         try:
@@ -2051,6 +2067,12 @@ class App:
             self.macro.toggle()
 
     def close(self):
+        try:
+            if self.root.state() == "normal":
+                self.cfg["win_h"] = self.root.winfo_height()   # 다음에 같은 크기로
+                save_config(self.cfg)
+        except Exception:
+            pass
         if self.macro:
             self.macro.quit = True
             self.macro.running = False

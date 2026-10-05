@@ -166,11 +166,13 @@ class Macro:
     # ---------- 입력 ----------
     def missing_setup(self):
         c = self.cfg
-        if c["bite_mode"] in ("subtitle", "both"):
-            if not c["subtitle_roi"] or self.subtitle_template() is None:
-                return "입질 자막을 먼저 지정해야 함"
-        if c["bite_mode"] in ("bobber", "both") and not c["bobber_roi"]:
+        has_sub = bool(c["subtitle_roi"]) and self.subtitle_template() is not None
+        if c["bite_mode"] == "subtitle" and not has_sub:
+            return "입질 자막을 먼저 지정해야 함"
+        if c["bite_mode"] == "bobber" and not c["bobber_roi"]:
             return "찌 영역을 먼저 지정해야 함"
+        if c["bite_mode"] == "both" and not has_sub and not c["bobber_roi"]:
+            return "입질 자막이나 찌 영역 중 하나는 지정해야 함"
         return None
 
     def toggle(self):
@@ -543,9 +545,35 @@ class Macro:
 
     # ---------- 단계 ----------
     def wait_bite(self):
-        if self.cfg["bite_mode"] == "subtitle":
-            return self.wait_bite_subtitle()
-        return self.wait_bite_bobber()          # bobber / both
+        """입질 기다리기. both(기본) = 자막과 찌를 같이 보고 먼저 잡힌 쪽으로.
+        both 인데 한쪽만 지정돼 있으면 지정된 쪽만 봄."""
+        c = self.cfg
+        mode = c["bite_mode"]
+        if mode == "both":
+            has_sub = bool(c["subtitle_roi"]) and self.subtitle_template() is not None
+            if not c["bobber_roi"]:
+                mode = "subtitle"
+            elif not has_sub:
+                mode = "bobber"
+        self.bite_log = {"mode": mode, "sub_max": None, "dip_max": None}
+        self.logger.write("BITE", f"입질 대기 시작: 모드={mode} (설정 {c['bite_mode']})")
+        if mode == "subtitle":
+            ok = self.wait_bite_subtitle()
+        else:
+            ok = self.wait_bite_bobber(both=mode == "both")
+        bl = self.bite_log
+        tr = self.stats.get("trace") or []
+        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} "
+                                  f"자막최고={'-' if bl['sub_max'] is None else format(bl['sub_max'], '.2f')} "
+                                  f"dip최고={'-' if bl['dip_max'] is None else format(bl['dip_max'], '.2f')} "
+                                  f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")
+        return ok
+
+    def _note_sub(self, s):
+        """실패 판 분석용: 이번 대기 중 자막 점수 최고값."""
+        bl = getattr(self, "bite_log", None)
+        if bl is not None and s is not None and (bl["sub_max"] is None or s > bl["sub_max"]):
+            bl["sub_max"] = s
 
     def wait_bite_subtitle(self, settled=False):
         """자막 '낚시찌 첨벙'이 뜨면 입질. (기존 마크 자동낚시 프로그램들이 쓰는 방식)"""
@@ -571,6 +599,7 @@ class Macro:
         while time.perf_counter() < deadline:
             self.check()
             s = self.subtitle_score() or 0
+            self._note_sub(s)
             if time.perf_counter() > next_log:
                 self.log(f"자막 일치 {s:.0%} (기준 {thr:.0%})")
                 next_log = time.perf_counter() + 0.5
@@ -594,11 +623,12 @@ class Macro:
         self.stats["bobber_n"], self.stats["bobber_y"] = n, y
         return n, y, float(white.mean()), img
 
-    def wait_bite_bobber(self):
+    def wait_bite_bobber(self, both=None):
         """찌 실시간 감지: 찌 높이를 계속 추적(평소 출렁임 범위를 계속 갱신)해서 푹 꺼지거나,
-        찌 주변에 흰 물보라가 갑자기 튀면 입질. 'both' 모드면 자막도 같이 봄."""
+        찌 주변에 흰 물보라가 갑자기 튀면 입질. both 면 자막도 같이 봄."""
         c = self.cfg
-        both = c["bite_mode"] == "both"
+        if both is None:
+            both = c["bite_mode"] == "both"
         self.state = "찌 자리잡는 중"
         self.sleep(c["cast_settle_sec"])
         track = self.locate_bobber()
@@ -621,7 +651,9 @@ class Macro:
             self.check()
             now = time.perf_counter()
             n, y, splash, img = self.bobber_frame(track)
-            if both and (self.subtitle_score() or 0) >= thr:
+            if both:
+                self._note_sub(self.subtitle_score())
+            if both and (self.stats["sub"] or 0) >= thr:
                 self.out(f"입질! (자막 {self.stats['sub']:.0%})")
                 self.bite_img = img
                 return True
@@ -638,6 +670,11 @@ class Macro:
                 dip_thr = max(c["bite_dip_px"], 4 * noise_y, 0.35 * self.bobber_h)
                 dy = None if y is None else y - med_y
                 dip = dy is not None and dy > dip_thr
+                bl = getattr(self, "bite_log", None)
+                if bl is not None and dy is not None:
+                    v = dy / max(dip_thr, 1)
+                    if bl["dip_max"] is None or v > bl["dip_max"]:
+                        bl["dip_max"] = v
                 drop = n < med_n * c["bite_drop_ratio"]
                 burst = splash > med_sp + max(0.02, 6 * noise_sp)
                 trace.append((0 if dy is None else dy / max(dip_thr, 1), (splash - med_sp) / max(0.02, 6 * noise_sp)))
@@ -1331,7 +1368,7 @@ class Macro:
             now = "1~2" if kind == "low" else str(val)
             self.stop_with(f"낚싯대 내구도 {now}/{self.stats.get('dura_max') or c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
         self.state = "던지는 중"
-        if self.cfg["bite_mode"] in ("bobber", "both"):
+        if self.cfg["bite_mode"] in ("bobber", "both") and self.cfg["bobber_roi"]:
             _, m = self.bobber_search_mask()
             self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         self.right_click()               # 던지기

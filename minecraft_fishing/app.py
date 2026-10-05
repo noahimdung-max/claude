@@ -691,11 +691,11 @@ class App:
         bf.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4 * S))
         label(bf, "입질 감지 :", "b").pack(side="left", padx=(0, 6 * S))
         self.bite_mode = tk.StringVar(value=self.cfg["bite_mode"])
-        PixelCheck(bf, "자막 (추천)", self.bite_mode, self.change_mode, radio_value="subtitle").pack(
+        PixelCheck(bf, "자막", self.bite_mode, self.change_mode, radio_value="subtitle").pack(
             side="left", padx=(0, 8 * S))
         PixelCheck(bf, "찌 화면", self.bite_mode, self.change_mode, radio_value="bobber").pack(
             side="left", padx=(0, 8 * S))
-        PixelCheck(bf, "둘 다", self.bite_mode, self.change_mode, radio_value="both").pack(side="left")
+        PixelCheck(bf, "둘 다 (추천)", self.bite_mode, self.change_mode, radio_value="both").pack(side="left")
         rows = [(k, ic, n) for k, ic, n, _ in self.ITEMS] + [("bar", "fish", "미니게임 바")]
         for r, (key, ic, name) in enumerate(rows, start=1):
             tk.Label(c, image=self.icons[ic], bg=PANEL, width=24 * S).grid(row=r, column=0, pady=2 * S)
@@ -1128,7 +1128,7 @@ class App:
                 self.draw_log_page()
             self.draw_dashboard(m)
             self.draw_live(s)
-            if self.cfg["bite_mode"] == "subtitle":
+            if self.cfg["bite_mode"] == "subtitle" or (self.cfg["bite_mode"] == "both" and not self.cfg["bobber_roi"]):
                 sub = s["sub"]
                 hit = sub is not None and sub >= self.cfg["subtitle_threshold"]
                 self.vals["bite"].config(text="-" if sub is None else f"자막 {sub:.0%}", fg=OK if hit else TXT)
@@ -1802,10 +1802,11 @@ class App:
     # ---------- 설정 ----------
     def refresh_status(self):
         c = self.cfg
-        sub_mode = c["bite_mode"] == "subtitle"
         done = {"subtitle": c["subtitle_roi"] and SUBTITLE_PATH.exists(), "bobber": c["bobber_roi"],
                 "rod": c["durability_roi"]}
-        need = {"subtitle": "필수" if sub_mode else "안 씀", "bobber": "안 씀" if sub_mode else "필수",
+        mode = c["bite_mode"]
+        need = {"subtitle": {"subtitle": "필수", "bobber": "안 씀"}.get(mode, "둘 중 하나"),
+                "bobber": {"subtitle": "안 씀", "bobber": "필수"}.get(mode, "둘 중 하나"),
                 "rod": "자동"}
         for k, ok in done.items():
             if not ok and k == "rod":
@@ -1998,7 +1999,7 @@ class App:
         self.cfg["bite_mode"] = self.bite_mode.get()
         save_config(self.cfg)
         self.refresh_status()
-        self.log("입질 감지: " + ("자막" if self.cfg["bite_mode"] == "subtitle" else "찌 화면 (예비)"), "warn")
+        self.log("입질 감지: " + {"subtitle": "자막만", "bobber": "찌 화면만"}.get(self.cfg["bite_mode"], "자막 + 찌 (먼저 잡히는 쪽)"), "warn")
 
     def reset_bar(self):
         self.cfg["bar_roi"] = None

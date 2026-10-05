@@ -18,7 +18,7 @@ ANVIL_PATH = DATA_DIR / "anvil_view.png"     # 모루를 정확히 바라본 화
 
 DEFAULTS = {
     "monitor": 1,
-    "bite_mode": "subtitle",     # subtitle = 자막 '낚시찌 첨벙' 감지(추천) / bobber = 찌 화면 감시(예비)
+    "bite_mode": "both",         # both = 자막 또는 찌 둘 중 먼저 잡히는 것(기본) / subtitle = 자막만 / bobber = 찌만
     "subtitle_roi": None,        # [x, y, w, h] 자막을 찾을 영역 (자막 지정 시 자동 계산)
     "subtitle_threshold": 0.8,   # 자막 글자 일치도 기준 (0~1)
     "bite_confirm_frames": 2,    # 연속 몇 번 감지돼야 입질로 볼지

@@ -20,7 +20,7 @@ import pydirectinput
 import winapi
 
 from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, durability_value, find_bobber, fish_blob_x,
-                    gauge_present, load_config, load_subtitle_template, locate_bar, match_score, save_config,
+                    gauge_present, load_config, load_subtitle_template, locate_bar, match_best, save_config,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
                     gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point)
@@ -153,6 +153,8 @@ class Macro:
         self.pre_mask = None
         self.bobber_h = 0
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
+        self.sub_pos = None              # 마지막으로 입질 자막이 잡힌 위치 (캡처 좌표, 템플릿 왼쪽 위). 다음엔 이 근처부터 찾음
+        self._sub_wide_t = 0.0           # 넓은 영역을 마지막으로 훑은 시각
         self.state = "대기"
         self.stats = {"bobber_n": None, "bobber_y": None, "zone": None, "fish": None, "active": False,
                       "sub": None, "dura": None, "dura_max": None, "caught": 0,
@@ -485,17 +487,52 @@ class Macro:
             if t is not None and abs(r - 1) > 0.01:
                 t = cv2.resize(t, None, fx=r, fy=r, interpolation=cv2.INTER_NEAREST)
             self.sub_tmpl = t
+            self.sub_pos = None                      # 템플릿·영역이 바뀌었으니 예전 위치는 버림
         return self.sub_tmpl
 
+    SUB_WIDE_EVERY = 0.05      # 마지막 위치 근처에서 못 찾았을 때 넓은 영역을 다시 훑는 간격(초)
+
     def subtitle_score(self):
+        """자막 일치도. 2단계 탐색: ① 마지막으로 잡힌 위치 근처(좁고 빠름) -> ② 못 찾으면 넓은 영역(subtitle_search_roi).
+        넓은 영역은 0.05초에 한 번만 훑음. 넓은 영역에서 잡히면 그 위치가 새 '마지막 위치'가 돼서 바로 다음 확인은 ①에서 됨.
+        근처에서 잡히면 넓은 영역은 안 훑음 (자막은 줄이 쌓이면 위아래로, 다른 자막 폭에 따라 좌우로 조금씩 움직임)."""
         c = self.cfg
         t = self.subtitle_template()
         if t is None or not c["subtitle_roi"]:
             self.stats["sub"] = None
             return None
-        s = match_score(self.screen.grab(getattr(self, "sub_roi", None) or c["subtitle_roi"]), t)
-        self.stats["sub"] = s
-        return s
+        thr = c["subtitle_threshold"]
+        wide = getattr(self, "sub_roi", None) or c["subtitle_roi"]
+        th, tw = t.shape[:2]
+        bl = getattr(self, "bite_log", None)
+        now = time.perf_counter()
+        score, stage, where = 0.0, "근처", None
+        if self.sub_pos is not None:
+            px, py = self.sub_pos
+            mx, my = int(tw * 0.6), int(th * 4)            # 좌우로 글자 폭의 60%, 위아래로 글자 높이의 4배
+            x0, y0 = max(wide[0], px - mx), max(wide[1], py - my)
+            x1, y1 = min(wide[0] + wide[2], px + tw + mx), min(wide[1] + wide[3], py + th + my)
+            if x1 - x0 >= tw and y1 - y0 >= th:
+                score, loc = match_best(self.screen.grab([x0, y0, x1 - x0, y1 - y0]), t)
+                where = None if loc is None else (x0 + loc[0], y0 + loc[1])
+                if bl is not None:
+                    bl["sub_near"] += 1
+        if score < thr and (self.sub_pos is None or now - self._sub_wide_t >= self.SUB_WIDE_EVERY):
+            s, loc = match_best(self.screen.grab(wide), t)
+            self._sub_wide_t = now
+            if bl is not None:
+                bl["sub_wide"] += 1
+            if s >= score:
+                score, stage = s, "넓게"
+                where = None if loc is None else (wide[0] + loc[0], wide[1] + loc[1])
+        if score >= thr and where is not None:
+            self.sub_pos = where
+            if bl is not None:
+                if bl["sub_hit"] is None:                  # 이번 입질에서 처음 기준을 넘은 단계/위치
+                    bl["sub_hit"] = f"{stage}@{where[0]},{where[1]}"
+                bl["sub_hits_" + ("near" if stage == "근처" else "wide")] += 1
+        self.stats["sub"] = score
+        return score
 
     def durability_reading(self):
         """(내구도 숫자, 종류) - 종류: color / low(1~2) / full. 영역 미설정이면 None."""
@@ -555,7 +592,8 @@ class Macro:
                 mode = "subtitle"
             elif not has_sub:
                 mode = "bobber"
-        self.bite_log = {"mode": mode, "sub_max": None, "dip_max": None}
+        self.bite_log = {"mode": mode, "sub_max": None, "dip_max": None, "sub_near": 0, "sub_wide": 0,
+                         "sub_hits_near": 0, "sub_hits_wide": 0, "sub_hit": None}
         self.logger.write("BITE", f"입질 대기 시작: 모드={mode} (설정 {c['bite_mode']})")
         if mode == "subtitle":
             ok = self.wait_bite_subtitle()
@@ -566,7 +604,8 @@ class Macro:
         f = lambda v, fmt=".2f": "-" if v is None else format(v, fmt)
         self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v2(속도+픽셀감소 0.12초) "
                                   f"사유={bl.get('reason') or '-'} 예전판정도반응={'예' if bl.get('old_same') else '아니오'} "
-                                  f"자막최고={f(bl['sub_max'])} dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
+                                  f"자막최고={f(bl['sub_max'])} 자막탐색=v2(근처 {bl['sub_near']}회·넓게 {bl['sub_wide']}회 훑음, "
+                                  f"기준 넘은 것 근처 {bl['sub_hits_near']}·넓게 {bl['sub_hits_wide']}, 처음 잡힌 곳={bl['sub_hit'] or '-'}) dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
                                   f"픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
                                   f"마지막값[{bl.get('last', '-')}] "
                                   f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")

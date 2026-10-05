@@ -412,14 +412,20 @@ def subtitle_search_roi(rect, img_w, img_h):
     return [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]
 
 
-def match_score(img, tmpl):
-    """img(BGR) 안에서 자막 템플릿(흰 글자)과 가장 비슷한 곳의 일치도 (0~1)."""
+def match_best(img, tmpl):
+    """img(BGR) 안에서 자막 템플릿(흰 글자)과 가장 비슷한 곳: (일치도 0~1, (x, y) 왼쪽 위). 못 찾으면 (0.0, None)."""
     g = text_binary(to_gray(img))
     th, tw = tmpl.shape[:2]
     if g.shape[0] < th or g.shape[1] < tw:
-        return 0.0
-    res = cv2.matchTemplate(g, tmpl, cv2.TM_CCOEFF_NORMED)
-    return float(np.nan_to_num(res, nan=0.0, posinf=0.0, neginf=0.0).max())
+        return 0.0, None
+    res = np.nan_to_num(cv2.matchTemplate(g, tmpl, cv2.TM_CCOEFF_NORMED), nan=0.0, posinf=0.0, neginf=0.0)
+    _, mx, _, loc = cv2.minMaxLoc(res)
+    return float(mx), (int(loc[0]), int(loc[1]))
+
+
+def match_score(img, tmpl):
+    """img(BGR) 안에서 자막 템플릿(흰 글자)과 가장 비슷한 곳의 일치도 (0~1)."""
+    return match_best(img, tmpl)[0]
 
 
 # ---------------------------------------------------------------- 핫바

@@ -19,7 +19,7 @@ import pydirectinput
 
 import winapi
 
-from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, durability_value, find_bobber, fish_blob_x,
+from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bobber_style, bracket_runs, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
@@ -431,7 +431,7 @@ class Macro:
         while time.perf_counter() < deadline:
             self.check()
             img = self.screen.grab(c["bobber_roi"])
-            found = find_bobber(img, center, self.pre_mask, c["min_pixels"], max_side)
+            found = find_bobber(img, center, self.pre_mask, c["min_pixels"], max_side, bobber_style(c))
             if found:
                 x, y, w, h = found
                 self.bobber_h = h
@@ -702,7 +702,7 @@ class Macro:
     def bobber_frame(self, track):
         """추적 영역에서 (빨강 픽셀 수, 찌 중심 y, 흰 물보라 비율, 원본 이미지)."""
         img = self.screen.grab(track)
-        red = bobber_mask(img)
+        red = bobber_mask(img, self.cfg)
         n = int(red.sum())
         y = float(np.nonzero(red)[0].mean()) if n >= self.cfg["min_pixels"] else None
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)

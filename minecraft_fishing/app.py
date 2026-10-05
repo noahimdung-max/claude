@@ -28,7 +28,7 @@ except Exception:
 
 import keyboard
 
-from common import (ANVIL_PATH, SUBTITLE_PATH, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
+from common import (BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_style, write_bobber_pack, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
@@ -721,6 +721,20 @@ class App:
                               wraplength=PANEL_W - 40 * S, justify="left")
         self.guide_row = len(rows) + 2
 
+        pk = Panel(self.pages["setup"], "찌 리소스팩 (선택)", self.icons["bobber"])
+        pk.pack(pady=(8 * S, 0))
+        label(pk.content, "찌를 눈에 확 띄는 형광색으로 바꾸는 리소스팩을 만들어 줘. 찌를 색만으로 찾아서 어두운 곳·작은 창에서도 훨씬 잘 잡혀. "
+                          "리소스팩이 허용되는 서버인지는 직접 확인해줘", fg=MUTED, wraplength=PANEL_W - 40 * S, justify="left").pack(anchor="w")
+        sr = tk.Frame(pk.content, bg=PANEL)
+        sr.pack(fill="x", pady=(6 * S, 0))
+        label(sr, "찌 색 :", "b").pack(side="left", padx=(0, 6 * S))
+        self.bstyle = tk.StringVar(value=bobber_style(self.cfg))
+        for key, sp in BOBBER_STYLES.items():
+            PixelCheck(sr, sp["short"], self.bstyle, self.change_bstyle, radio_value=key).pack(side="left", padx=(0, 8 * S))
+        PixelButton(pk.content, "리소스팩 만들기", self.make_bobber_pack, "green", width=PANEL_W - 40 * S).pack(pady=(6 * S, 0))
+        self.pack_lbl = label(pk.content, "", fg=MUTED, wraplength=PANEL_W - 40 * S, justify="left")
+        self.pack_lbl.pack(anchor="w", pady=(4 * S, 0))
+
         p2 = Panel(self.pages["fish"], "낚시 시작", self.icons["rod"])
         p2.pack()
         self.run_btn = PixelButton(p2.content, "▶ 낚시 시작! (F8)", self.toggle, "green",
@@ -863,6 +877,12 @@ class App:
             "접근성 → 텍스트 배경 불투명도 올리기 (자막이 잘 보여야 함)",
             "왼쪽 '설정' → 입질 자막 → 지정하기 → 직접 낚시하다 자막 뜨면 F7",
             "미니게임 바, 낚싯대 내구도는 자동으로 찾음 (안 되면 '직접')",
+        ]),
+        ("찌를 형광색으로 (리소스팩, 선택)", [
+            "왼쪽 '설정' 아래 '찌 리소스팩' 에서 분홍/연두 고르고 '리소스팩 만들기'",
+            "마크 옵션 → 리소스팩 에서 만든 팩('MacroBobber_...')을 켜고 맨 위로 (호환 안 됨 표시가 떠도 켜면 돼)",
+            "찌가 형광색으로 보이면 성공. 찌를 색만으로 찾아서 어두운 곳·작은 창에서도 잘 잡혀",
+            "서버가 리소스팩을 막거나 강제하면 안 바뀔 수 있어. 그땐 찌 색을 '기본'으로 돌려둬",
         ]),
         ("잘 낚이게 하는 마크 설정", [
             "파티클: 최소  (물보라·거품이 찌/화면 판정을 방해함)",
@@ -1917,7 +1937,7 @@ class App:
             x, y, w, h = roi
             crop = img[y:y + h, x:x + w].copy()
             H, W = img.shape[:2]
-            found = find_bobber(crop, (W / 2 - x, H / 2 - y), max_side=max(40, int(0.075 * H)))
+            found = find_bobber(crop, (W / 2 - x, H / 2 - y), max_side=max(40, int(0.075 * H)), style=bobber_style(c))
             if found:
                 bx, by, bw, bh = found
                 cv2.rectangle(crop, (bx - 4, by - 4), (bx + bw + 4, by + bh + 4), (0, 255, 0), 2)
@@ -2000,6 +2020,43 @@ class App:
         save_config(self.cfg)
         self.refresh_status()
         self.log("입질 감지: " + {"subtitle": "자막만", "bobber": "찌 화면만"}.get(self.cfg["bite_mode"], "자막 + 찌 (먼저 잡히는 쪽)"), "warn")
+
+    def change_bstyle(self):
+        st = self.bstyle.get()
+        self.cfg["bobber_style"] = st
+        save_config(self.cfg)
+        if self.macro:
+            self.macro.pre_mask = None
+        self.log("찌 색: " + BOBBER_STYLES[st]["name"] + ("" if st == "vanilla" else " (마크에 리소스팩을 켜야 해)"), "warn")
+
+    def make_bobber_pack(self):
+        """찌 리소스팩 zip 을 마크 resourcepacks 폴더에 만듦 (폴더를 못 찾으면 고르게 함)."""
+        st = self.bstyle.get()
+        if st == "vanilla":
+            messagebox.showinfo("찌 리소스팩", "찌 색에서 '분홍'이나 '연두'를 골라줘 (기본은 마크 원래 찌라 만들 팩이 없어)")
+            return
+        folder = Path(os.environ.get("APPDATA", "")) / ".minecraft" / "resourcepacks"
+        if not folder.is_dir():
+            picked = filedialog.askdirectory(title="마크 resourcepacks 폴더를 골라줘 (마크 옵션 > 리소스팩 > 팩 폴더 열기)")
+            if not picked:
+                return
+            folder = Path(picked)
+        try:
+            path = write_bobber_pack(folder, st)
+        except OSError as e:
+            messagebox.showerror("오류", f"리소스팩을 못 만들었어: {e}")
+            return
+        self.cfg["bobber_style"] = st
+        save_config(self.cfg)
+        name = BOBBER_STYLES[st]["name"]
+        self.pack_lbl.config(text=f"만들었어: {path}", fg=OK)
+        self.log(f"찌 리소스팩 만듦 ({name}): {path}", "good")
+        messagebox.showinfo("찌 리소스팩", f"만들었어!\n{path}\n\n"
+                            "1) 마크 옵션 > 리소스팩 에서 'MacroBobber_" + st + "' 을 오른쪽(켬)으로 옮기고 맨 위로 올리기\n"
+                            "   ('호환 안 됨' 표시가 떠도 눌러서 켜면 돼)\n"
+                            "2) 완료 누르면 적용돼. 안 바뀌면 F3+T\n"
+                            "3) 낚싯대를 던져서 찌가 " + name + " 으로 보이면 성공. 이 프로그램의 찌 색은 이미 맞춰 뒀어\n"
+                            "4) 설정 탭 '찌 영역'을 다시 지정하면 더 정확해")
 
     def reset_bar(self):
         self.cfg["bar_roi"] = None

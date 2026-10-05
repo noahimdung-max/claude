@@ -28,6 +28,7 @@ DEFAULTS = {
     "bar_search_roi": None,      # 자동 탐색 범위. 비워두면 화면 아래쪽 가운데
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
+    "bobber_style": "vanilla",   # 찌 모양: vanilla(기본 빨강+흰색) / magenta(형광 분홍) / lime(형광 연두) - 리소스팩으로 바꾼 찌
     "sneak_key": "shift",
     "win_h": None,
     "ref_client": None,          # 위치들을 지정할 때 마크 창 [x, y, w, h] (창이 바뀌면 이걸 기준으로 옮김)
@@ -119,29 +120,66 @@ def _bgr(img):
 
 BOBBER_V_MIN = 40       # 찌 빨간 부분 최소 밝기 (어두운 밤·Moody 밝기에서도 잡히게. 예전 60)
 
+# 찌 리소스팩 (낚시 매크로가 만들어 주는 형광 찌): 찌 머리를 단색 형광으로 바꾸면 색만으로 쉽게 찾음.
+# hue 는 OpenCV 색상(0~179). 순수 분홍(255,0,255)=150, 순수 연두(0,255,0)=60
+BOBBER_STYLES = {
+    "vanilla": {"name": "기본 (빨강+흰색)", "short": "기본"},
+    "magenta": {"name": "형광 분홍", "short": "분홍", "rgb": (255, 0, 255), "hue": (135, 165)},
+    "lime": {"name": "형광 연두", "short": "연두", "rgb": (0, 255, 0), "hue": (45, 75)},
+}
 
-def bobber_mask(img, cfg=None):
-    """찌 빨간 부분: 선명한 빨강 (어두울 때도 잡히게 밝기 기준은 낮게). 고른 색은 안 씀
-    (해질녘 하늘까지 잡혀서). 하늘 같은 큰 덩어리는 find_bobber 의 모양 검사로 걸러냄."""
+
+def bobber_style(cfg):
+    st = (cfg or {}).get("bobber_style", "vanilla")
+    return st if st in BOBBER_STYLES else "vanilla"
+
+
+def neon_mask(img, style):
+    """형광 찌 색: 그 색 범위 + 선명함. 밝기는 어두운 곳도 되게 낮게 (엔티티는 밝기에 따라 어두워짐)."""
+    lo, hi = BOBBER_STYLES[style]["hue"]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return (h >= lo) & (h <= hi) & (s >= 140) & (v >= BOBBER_V_MIN)
+
+
+def bobber_mask(img, cfg=None, style=None):
+    """찌 색 마스크. 기본 찌: 선명한 빨강 (어두울 때도 잡히게 밝기 기준은 낮게. 고른 색은 안 씀 -
+    해질녘 하늘까지 잡혀서. 하늘 같은 큰 덩어리는 find_bobber 의 모양 검사로 걸러냄).
+    형광 리소스팩을 쓰면(bobber_style) 그 형광색."""
+    style = style or bobber_style(cfg)
+    if style != "vanilla":
+        return neon_mask(img, style)
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     return ((h <= 10) | (h >= 170)) & (s >= 150) & (v >= BOBBER_V_MIN)
 
 
-def find_bobber(img, center, ignore=None, min_px=6, max_side=80):
+def find_bobber(img, center, ignore=None, min_px=6, max_side=80, style="vanilla"):
     """찌 찾기: '작은 빨간 덩어리 + 바로 위나 아래에 붙은 흰 부분' 중 center(조준점)에 가장 가까운 것.
     ignore: 던지기 전부터 있던 빨간 물체 마스크. 반환 (x, y, w, h) 또는 None
     흰 부분 밝기 기준은 그 찌의 빨간 부분 밝기에 맞춤: 낮에는 예전처럼 110 이상, 어두우면 빨간 부분의 85% 이상
-    (찌 그림에서 흰색은 빨강과 같거나 더 밝아서, 어두운 장면에서도 '빨강만큼은 밝은 흰색 계열'이면 찌의 흰 부분)."""
-    red = bobber_mask(img)
+    (찌 그림에서 흰색은 빨강과 같거나 더 밝아서, 어두운 장면에서도 '빨강만큼은 밝은 흰색 계열'이면 찌의 흰 부분).
+    형광 찌(style 이 vanilla 가 아님)는 흰 부분이 없으니 '꽉 찬 작은 덩어리' 중 조준점에서 가장 가까운 것."""
+    red = bobber_mask(img, style=style)
     if ignore is not None and ignore.shape == red.shape:
         red &= ~ignore
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    low_sat = hsv[..., 1] <= 110                               # 흰 부분 (노을에 물들어도)
-    val = hsv[..., 2]
     n, _, st, cent = cv2.connectedComponentsWithStats(
         cv2.dilate(red.astype(np.uint8), np.ones((3, 3), np.uint8)))
     best, best_d = None, None
+    if style != "vanilla":
+        for i in range(1, n):
+            x, y, w, h, area = (int(v) for v in st[i])
+            if area < min_px or w > max_side or h > max_side or w > 6 * h or h > 6 * w:
+                continue
+            if float(red[y:y + h, x:x + w].mean()) < 0.35:              # 속이 찬 덩어리만 (색 비슷한 선·잡음 제외)
+                continue
+            d = (cent[i][0] - center[0]) ** 2 + (cent[i][1] - center[1]) ** 2
+            if best_d is None or d < best_d:
+                best, best_d = (x, y, w, h), d
+        return best
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    low_sat = hsv[..., 1] <= 110                               # 흰 부분 (노을에 물들어도)
+    val = hsv[..., 2]
     for i in range(1, n):
         x, y, w, h, area = (int(v) for v in st[i])
         if area < min_px or w > max_side or h > max_side:
@@ -159,6 +197,49 @@ def find_bobber(img, center, ignore=None, min_px=6, max_side=80):
         if best_d is None or d < best_d:
             best, best_d = (x, y, w, h), d
     return best
+
+
+def _png_bytes(arr):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def bobber_pack_files(style):
+    """찌 리소스팩 파일들 {zip 안 경로: 바이트}. 마크 낚시찌 그림(entity/fishing_hook.png, 8x8)의 머리 부분만 단색 형광으로.
+    머리는 원래 3x3 인데 5x3 으로 키워서(좌우만) 작은 화면에서도 더 잘 보이게. 낚싯줄·바늘 자리는 그대로 검정."""
+    import json
+    sp = BOBBER_STYLES[style]
+    r, g, b = sp["rgb"]
+    tex = np.zeros((8, 8, 4), np.uint8)
+    tex[1:4, 2:7] = (r, g, b, 255)
+    for x, y in ((4, 4), (4, 5), (2, 6), (4, 6), (3, 7), (4, 7)):
+        tex[y, x] = (0, 0, 0, 255)
+    icon = np.zeros((64, 64, 4), np.uint8)
+    icon[:] = (30, 34, 46, 255)
+    icon[20:44, 12:52] = (r, g, b, 255)
+    icon[44:60, 30:34] = (0, 0, 0, 255)
+    meta = {"pack": {
+        "pack_format": 34,
+        "supported_formats": {"min_inclusive": 34, "max_inclusive": 999},   # 1.21 이후 버전들 (넓게)
+        "min_format": 34, "max_format": 999,                                  # 새 방식 (1.21.9 이후)
+        "description": f"낚시 매크로 찌 ({sp['name']})"}}
+    return {"pack.mcmeta": json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
+            "pack.png": _png_bytes(icon),
+            "assets/minecraft/textures/entity/fishing_hook.png": _png_bytes(tex)}
+
+
+def write_bobber_pack(folder, style):
+    """folder 에 MacroBobber_<색>.zip 을 만듦. 만든 경로 반환."""
+    import zipfile
+    from pathlib import Path
+    path = Path(folder) / f"MacroBobber_{style}.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in bobber_pack_files(style).items():
+            z.writestr(name, data)
+    return path
 
 
 def fish_mask(img, cfg):

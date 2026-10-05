@@ -74,6 +74,9 @@ jobs:
         timeout-minutes: 2
         run: python -c "import app; a = app.App(); [a.show_page(k) or a.root.update() for k in a.pages]; a.toggle_theme(); a.root.update(); a.close(); print('ui ok')"
 
+      - name: Make bobber resource packs (also a test of the pack writer)
+        run: python -c "import zipfile; from common import write_bobber_pack; [print(p, zipfile.ZipFile(p).namelist()) for p in (write_bobber_pack('dist', s) for s in ('magenta', 'lime'))]"
+
       - uses: actions/upload-artifact@v4
         with:
           name: MinecraftFishingMacro
@@ -92,5 +95,7 @@ jobs:
           name: 마크 낚시 매크로 v${{ inputs.version || '1.0.0' }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          files: minecraft_fishing/dist/*.exe
+          files: |
+            minecraft_fishing/dist/*.exe
+            minecraft_fishing/dist/*.zip
           body_path: notes.md

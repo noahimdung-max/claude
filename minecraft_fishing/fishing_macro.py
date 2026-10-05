@@ -23,7 +23,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point)
+                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point, roi_in_bounds)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -267,6 +267,7 @@ class Macro:
                 time.sleep(0.3)
         self.io_ready = True
         self.follow_window()
+        self.sanitize_rois()
         self.adapt_gui_scale()
 
     def adapt_gui_scale(self):
@@ -643,14 +644,14 @@ class Macro:
         bl = self.bite_log
         tr = (self.stats.get("trace") or []) if mode != "subtitle" else []
         f = lambda v, fmt=".2f": "-" if v is None else format(v, fmt)
-        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v2(속도+픽셀감소 0.12초) "
+        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v3(크기+픽셀감소 0.12초, 속도규칙 뺌) "
                                   f"사유={bl.get('reason') or '-'} 예전판정도반응={'예' if bl.get('old_same') else '아니오'} "
                                   f"자막최고={f(bl['sub_max'])} 자막탐색=v3(멀티스케일 {'/'.join(str(x) for x in self.SUB_SCALES)}, 배율별최고 "
                                   + ' '.join(f'{k}={v:.2f}' for k, v in sorted(bl['sub_scale_max'].items())) +
                                   f", 근처 {bl['sub_near']}회·넓게 {bl['sub_wide']}회 훑음(그중 모든 배율을 본 횟수 {bl['sub_alt']}), "
                                   f"기준 넘은 것 근처 {bl['sub_hits_near']}·넓게 {bl['sub_hits_wide']}, 처음 잡힌 곳={bl['sub_hit'] or '-'}) "
                                   f"dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
-                                  f"픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
+                                  f"속도규칙만반응={bl.get('fast_only', 0)}프레임 픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
                                   f"마지막값[{bl.get('last', '-')}] "
                                   f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")
         return ok
@@ -778,8 +779,10 @@ class Macro:
                         raw_speed = d / dt if raw_speed is None else max(raw_speed, d / dt)
                         if d >= max(2.0, 0.2 * h):
                             speed = d / dt if speed is None else max(speed, d / dt)
+                # 실제 로그(79번)에서 이 '빠르게 내려감' 규칙으로 잡힌 17번이 전부 헛챔질이었음 (찌가 평소에도 7~15px 출렁임)
+                # -> 입질 판정에는 쓰지 않고 로그 분석용으로만 계산
                 dip_fast = dy is not None and dy > fast_thr and speed is not None and speed >= 2.0 * h
-                dip = dip_size or dip_fast
+                dip = dip_size
                 # (3) 찌 픽셀이 줄어듦: 파티클이 한순간 가린 것과 구분하려고 0.12초 이상 계속 줄어 있어야 하고,
                 #     찌가 위로 튄 게 아니어야 함 (가라앉으면 보이는 부분의 중심은 아래로 감)
                 inst = n < med_n * c["bite_drop_ratio"]
@@ -787,13 +790,14 @@ class Macro:
                 drop = inst and now - drop_since >= 0.12 and (dy is None or dy >= -0.15 * h)
                 burst = splash > med_sp + max(0.02, 6 * noise_sp)
                 old_dip, old_drop = dy is not None and dy > dip_thr, inst
-                prog = 0.0 if dy is None else max(dy / max(dip_thr, 1), dy / fast_thr if dip_fast else 0.0)
+                prog = 0.0 if dy is None else dy / max(dip_thr, 1)
                 trace.append((prog, (splash - med_sp) / max(0.02, 6 * noise_sp)))
                 del trace[:-120]
-                why = "+".join(k for k, v in (("가라앉음(크기)", dip_size), ("가라앉음(속도)", dip_fast and not dip_size),
-                                              ("픽셀감소", drop), ("물보라", burst)) if v)
+                why = "+".join(k for k, v in (("가라앉음(크기)", dip_size), ("픽셀감소", drop), ("물보라", burst)) if v)
                 if bl is not None:
                     bl["dip_max"] = prog if bl["dip_max"] is None else max(bl["dip_max"], prog)
+                    if dip_fast and not dip_size:
+                        bl["fast_only"] = bl.get("fast_only", 0) + 1           # 예전 속도 규칙이었다면 입질로 봤을 프레임 수
                     if raw_speed is not None:
                         bl["speed_max"] = max(bl.get("speed_max") or 0.0, raw_speed / h)
                     if inst and not drop and not (old_dip or burst):
@@ -1042,6 +1046,26 @@ class Macro:
         ref = self.cfg.get("ref_client")
         return bool(ref) and self.hwnd is not None and self.game_rect() != list(ref)
 
+    def sanitize_rois(self):
+        """화면 밖(음수 좌표 등)으로 잘못 저장된 영역은 지움 -> 안 쓰고 있다고 알려줌 (골드 영역은 못 읽어서 수리 전 골드 확인이 조용히 꺼져 있었음)."""
+        c = self.cfg
+        W, H = self.screen.mon["width"], self.screen.mon["height"]
+        names = {"gold_roi": "골드 영역", "durability_roi": "내구도 영역", "bar_roi": "미니게임 바", "bar_search_roi": "바 찾는 범위",
+                 "subtitle_roi": "입질 자막 영역", "bobber_roi": "찌 영역"}
+        cleared = []
+        for k, name in names.items():
+            if c.get(k) and not roi_in_bounds(c[k], W, H):
+                self.logger.write("INFO", f"{name} {c[k]} 가 화면({W}x{H}) 밖이라 지움")
+                c[k] = None
+                cleared.append(name)
+        if cleared:
+            save_config(c)
+            self.sub_tmpl = None
+            self.out("[알림] 화면 밖에 있던 영역을 지웠어: " + ", ".join(cleared) + " -> 설정 탭에서 다시 지정해줘")
+            need = self.missing_setup()
+            if need:                                      # 입질 감지에 꼭 필요한 영역이 지워졌으면 멈춤
+                self.stop_with(need)
+
     def follow_window(self):
         """마크 창이 바뀌었으면 지정해 둔 영역·수리 위치를 새 창에 맞게 옮김. 옮겼으면 True.
         HUD 는 창의 가까운 끝(아래 가운데 핫바, 오른쪽 아래 자막 등)에 붙어 있고, 수리 창은 가운데 기준."""
@@ -1070,13 +1094,24 @@ class Macro:
             return False
         old_gui = c.get("ref_gui")
         r = now_gui / old_gui if now_gui and old_gui else 1.0
+        new_rois = {}
         for k in ("durability_roi", "gold_roi", "bar_search_roi"):
             if c.get(k):
-                c[k] = remap_rect(c[k], ref, cur, r)
+                new_rois[k] = remap_rect(c[k], ref, cur, r)
         if c.get("subtitle_roi"):                         # 자막 크기는 adapt_gui_scale 이 배율대로 맞춤
-            c["subtitle_roi"] = remap_rect(c["subtitle_roi"], ref, cur, 1.0)
+            new_rois["subtitle_roi"] = remap_rect(c["subtitle_roi"], ref, cur, 1.0)
         if c.get("bobber_roi"):                           # 게임 속 화면: 가운데 기준, 창 높이에 비례
-            c["bobber_roi"] = remap_rect(c["bobber_roi"], ref, cur, cur[3] / ref[3], "mid")
+            new_rois["bobber_roi"] = remap_rect(c["bobber_roi"], ref, cur, cur[3] / ref[3], "mid")
+        W, H = self.screen.mon["width"], self.screen.mon["height"]
+        bad = [k for k, v in new_rois.items() if not roi_in_bounds(v, W, H)]
+        if bad:
+            # 기준 창이 영역을 지정할 때의 창과 달랐던 것 (예전 설정 등). 그대로 옮기면 화면 밖으로 나가니 건드리지 않음
+            c["ref_client"], c["ref_gui"] = cur, now_gui or old_gui
+            save_config(c)
+            self.out("[알림] 마크 창이 지정할 때와 달라 보이는데 자동으로 맞추면 영역이 화면 밖으로 나가서 그대로 둠. "
+                     "입질·내구도가 안 잡히면 영역을 다시 지정해줘")
+            return False
+        c.update(new_rois)
         c["bar_roi"] = None                               # 미니게임 바는 다음 판에 다시 찾음
         pts = c.get("repair_points")
         if pts:                                           # 수리 창(GUI)은 창 가운데 기준
@@ -1262,13 +1297,23 @@ class Macro:
         cpp = 1 / (view_focal_px(h) * math.radians(deg))      # 화면 1px = 마우스 몇 칸 (FOV 70 기준, 아래서 실측으로 고침)
         tol = max(2.0, h / 500)
         r = view_shift(ref, cur)
+        moved_x = moved_y = 0                                  # 지금까지 맞추느라 움직인 양 (망하면 되돌림)
+        err0 = None if r is None else math.hypot(r[0], r[1])
+
+        def undo(reason):
+            if moved_x or moved_y:
+                winapi.send_mouse_move(-moved_x, -moved_y, duration=0.15)
+                time.sleep(0.2)
+                self.logger.write("REPAIR", f"시점 맞춤 취소({reason}): 마우스 {-moved_x},{-moved_y} 로 되돌림")
+            return False
+
         for i in range(tries):
             if r is None:
-                return False
+                return undo("비교 실패")
             dx, dy, resp = r
             if resp < 0.1 or abs(dx) > w * 0.3 or abs(dy) > h * 0.3:
                 self.out(f"{tag} 기준 화면과 너무 달라서 시점 맞추기는 건너뜀 (일치 {resp:.2f})")
-                return False
+                return undo(f"일치 {resp:.2f}")
             if abs(dx) <= tol and abs(dy) <= tol:
                 return True
             mx, my = round(dx * cpp), round(dy * cpp)
@@ -1276,6 +1321,7 @@ class Macro:
                 return True
             self.logger.write("REPAIR", f"시점 맞춤 {i + 1}: 화면 {dx:.1f},{dy:.1f}px -> 마우스 {mx},{my}")
             winapi.send_mouse_move(mx, my, duration=0.15)
+            moved_x, moved_y = moved_x + mx, moved_y + my
             time.sleep(0.3)
             cur = self.client_img()
             r2 = view_shift(ref, cur)
@@ -1286,7 +1332,10 @@ class Macro:
                     if 0.3 * cpp < k < 3 * cpp:
                         cpp = k
             r = r2
-        return bool(r and r[2] >= 0.1 and abs(r[0]) <= tol * 2 and abs(r[1]) <= tol * 2)
+        ok = bool(r and r[2] >= 0.1 and abs(r[0]) <= tol * 2 and abs(r[1]) <= tol * 2)
+        if not ok and r is not None and err0 is not None and math.hypot(r[0], r[1]) > err0:
+            return undo("더 어긋남")                              # 맞추려다 오히려 멀어졌으면 처음 상태로
+        return ok
 
     def anvil_ref(self):
         """모루를 정확히 바라본 화면 (방향 기록 때 저장). 없거나 화면 크기가 다르면 None."""

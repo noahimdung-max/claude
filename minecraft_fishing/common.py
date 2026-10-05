@@ -643,9 +643,10 @@ def read_tooltip_durability(img):
         return None
     (x, y, w, h), inside = found
     img = img[y:y + h, x:x + w]
-    f = img.astype(np.int16)
-    mn, mx = f.min(axis=2), f.max(axis=2)
-    white = ((mn >= 150) & (mx - mn <= 25) & inside).astype(np.uint8)   # 흰/회색 글자 (그림자는 어두워서 빠짐)
+    mx = img.astype(np.int16).max(axis=2)
+    # 밝은 글자: 흰/회색뿐 아니라 색깔 글자도 (서버에 따라 내구도 숫자가 초록·노랑·빨강으로 나옴).
+    # 그림자는 글자 밝기의 1/4 이라 기준(120) 아래로 빠짐
+    white = ((mx >= 120) & inside).astype(np.uint8)
     n, _, st, _ = cv2.connectedComponentsWithStats(white, connectivity=8)
     chars = []                                    # 글자 하나 = 덩어리 하나 (숫자, '/' 는 한 덩어리)
     for i in range(1, n):
@@ -766,6 +767,15 @@ def remap_rect(roi, old, new, r=1.0, anchor=None):
     cy = _remap_axis(y + h / 2 - old[1], old[3], new[3], r, anchor)
     nw, nh = max(1, w * r), max(1, h * r)
     return [int(round(new[0] + cx - nw / 2)), int(round(new[1] + cy - nh / 2)), int(round(nw)), int(round(nh))]
+
+
+def roi_in_bounds(roi, W, H, slack=2):
+    """영역 [x, y, w, h] 가 화면(W x H) 안에 있는지. 숫자가 아니거나 크기가 0 이하여도 False."""
+    try:
+        x, y, w, h = (float(v) for v in roi)
+    except (TypeError, ValueError):
+        return False
+    return w > 0 and h > 0 and x >= -slack and y >= -slack and x + w <= W + slack and y + h <= H + slack
 
 
 def remap_point(pt, old, new, r=1.0, anchor=None):

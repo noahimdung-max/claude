@@ -562,10 +562,13 @@ class Macro:
         else:
             ok = self.wait_bite_bobber(both=mode == "both")
         bl = self.bite_log
-        tr = self.stats.get("trace") or []
-        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} "
-                                  f"자막최고={'-' if bl['sub_max'] is None else format(bl['sub_max'], '.2f')} "
-                                  f"dip최고={'-' if bl['dip_max'] is None else format(bl['dip_max'], '.2f')} "
+        tr = (self.stats.get("trace") or []) if mode != "subtitle" else []
+        f = lambda v, fmt=".2f": "-" if v is None else format(v, fmt)
+        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v2(속도+픽셀감소 0.12초) "
+                                  f"사유={bl.get('reason') or '-'} 예전판정도반응={'예' if bl.get('old_same') else '아니오'} "
+                                  f"자막최고={f(bl['sub_max'])} dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
+                                  f"픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
+                                  f"마지막값[{bl.get('last', '-')}] "
                                   f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")
         return ok
 
@@ -639,14 +642,16 @@ class Macro:
             self.out("찌를 못 찾음 -> 자막으로만 감지")
             return self.wait_bite_subtitle(settled=True)
 
-        hist = []                         # 최근 1.5초 (시각, 빨강 수, y, 물보라)
+        hist = []                         # 최근 1.5초 (시각, 빨강 수, y, 물보라) - 입질 아닌 프레임만
+        recent = []                       # 최근 0.3초 (시각, y) - 하강 속도용 (모든 프레임)
         trace = self.stats.setdefault("trace", [])
         trace.clear()
         self.state = "입질 기다리는 중 (찌" + (" + 자막)" if both else ")")
         deadline = time.perf_counter() + c["bite_timeout_sec"]
         warm_until = time.perf_counter() + 1.0  # 처음 1초는 평소 상태만 배움
-        hits, lost_since = 0, None
+        hits, lost_since, drop_since = 0, None, None
         thr = c["subtitle_threshold"]
+        bl = getattr(self, "bite_log", None)
         while time.perf_counter() < deadline:
             self.check()
             now = time.perf_counter()
@@ -658,27 +663,61 @@ class Macro:
                 self.bite_img = img
                 return True
 
-            hist = [h for h in hist if now - h[0] <= 1.5]
-            ys = [h[2] for h in hist if h[2] is not None]
-            ns = [h[1] for h in hist]
-            sp = [h[3] for h in hist]
+            h = max(self.bobber_h, 4)     # 찌 높이(px): 창 크기·GUI 배율에 따라 달라서 기준을 이걸로 맞춤
+            if y is not None:
+                recent.append((now, y))
+            recent = [r for r in recent if now - r[0] <= 0.3]
+            hist = [x for x in hist if now - x[0] <= 1.5]
+            ys = [x[2] for x in hist if x[2] is not None]
+            ns = [x[1] for x in hist]
+            sp = [x[3] for x in hist]
             dip = drop = burst = False
+            old_dip = old_drop = False    # 예전(v1.6.1 이전) 판정이었다면 (로그 비교용)
+            why = ""
             if ys and now > warm_until:
                 med_y, med_n, med_sp = float(np.median(ys)), float(np.median(ns)), float(np.median(sp))
                 noise_y = float(np.median(np.abs(np.array(ys) - med_y))) * 1.5 + 1
                 noise_sp = float(np.median(np.abs(np.array(sp) - med_sp))) * 1.5 + 0.002
-                dip_thr = max(c["bite_dip_px"], 4 * noise_y, 0.35 * self.bobber_h)
                 dy = None if y is None else y - med_y
-                dip = dy is not None and dy > dip_thr
-                bl = getattr(self, "bite_log", None)
-                if bl is not None and dy is not None:
-                    v = dy / max(dip_thr, 1)
-                    if bl["dip_max"] is None or v > bl["dip_max"]:
-                        bl["dip_max"] = v
-                drop = n < med_n * c["bite_drop_ratio"]
+                # (1) 크게 내려감: 예전과 같은 기준
+                dip_thr = max(c["bite_dip_px"], 4 * noise_y, 0.35 * h)
+                dip_size = dy is not None and dy > dip_thr
+                # (2) 작게 내려가도 빠르면: 작은 찌·작은 창에서 놓치던 것. 0.3초 안에 찌 높이의 2배/초 이상으로 하강
+                fast_thr = max(2.0, 2.5 * noise_y, 0.2 * h)
+                # 최근 0.3초 안의 아무 시점 대비 '충분히(2px·찌높이 20% 이상) 내려갔고, 그 속도가 빠른' 가장 센 값.
+                # (1px 흔들림이 짧은 간격에 찍혀 빨라 보이는 것은 d 조건으로 제외)
+                speed, raw_speed = None, None
+                if y is not None:
+                    for t_i, y_i in recent:
+                        dt, d = now - t_i, y - y_i
+                        if dt < 0.05:
+                            continue
+                        raw_speed = d / dt if raw_speed is None else max(raw_speed, d / dt)
+                        if d >= max(2.0, 0.2 * h):
+                            speed = d / dt if speed is None else max(speed, d / dt)
+                dip_fast = dy is not None and dy > fast_thr and speed is not None and speed >= 2.0 * h
+                dip = dip_size or dip_fast
+                # (3) 찌 픽셀이 줄어듦: 파티클이 한순간 가린 것과 구분하려고 0.12초 이상 계속 줄어 있어야 하고,
+                #     찌가 위로 튄 게 아니어야 함 (가라앉으면 보이는 부분의 중심은 아래로 감)
+                inst = n < med_n * c["bite_drop_ratio"]
+                drop_since = (drop_since or now) if inst else None
+                drop = inst and now - drop_since >= 0.12 and (dy is None or dy >= -0.15 * h)
                 burst = splash > med_sp + max(0.02, 6 * noise_sp)
-                trace.append((0 if dy is None else dy / max(dip_thr, 1), (splash - med_sp) / max(0.02, 6 * noise_sp)))
+                old_dip, old_drop = dy is not None and dy > dip_thr, inst
+                prog = 0.0 if dy is None else max(dy / max(dip_thr, 1), dy / fast_thr if dip_fast else 0.0)
+                trace.append((prog, (splash - med_sp) / max(0.02, 6 * noise_sp)))
                 del trace[:-120]
+                why = "+".join(k for k, v in (("가라앉음(크기)", dip_size), ("가라앉음(속도)", dip_fast and not dip_size),
+                                              ("픽셀감소", drop), ("물보라", burst)) if v)
+                if bl is not None:
+                    bl["dip_max"] = prog if bl["dip_max"] is None else max(bl["dip_max"], prog)
+                    if raw_speed is not None:
+                        bl["speed_max"] = max(bl.get("speed_max") or 0.0, raw_speed / h)
+                    if inst and not drop and not (old_dip or burst):
+                        bl["drop_rej"] = bl.get("drop_rej", 0) + 1       # 예전엔 입질로 봤을 짧은/위로 튄 감소
+                    if (old_dip or inst or burst) and not (dip or drop or burst):
+                        bl["old_only"] = bl.get("old_only", 0) + 1
+                    bl["last"] = f"dy={dy if dy is None else round(dy, 1)} 기준={dip_thr:.1f}/{fast_thr:.1f} 속도={'-' if speed is None else round(speed / h, 1)}h/s n={n}/{med_n:.0f}"
             if y is None:
                 lost_since = lost_since or now
                 if now - lost_since > 2.0 and not (dip or drop):
@@ -690,8 +729,10 @@ class Macro:
             bite = dip or drop or burst
             hits = hits + 1 if bite else 0
             if hits >= c["bite_confirm_frames"]:
-                why = "+".join(k for k, v in (("가라앉음", dip or drop), ("물보라", burst)) if v)
                 self.out(f"입질! (찌 {why})")
+                if bl is not None:
+                    bl["reason"] = why
+                    bl["old_same"] = bool(old_dip or old_drop or burst)
                 self.bite_img = img
                 return True
             if not bite:

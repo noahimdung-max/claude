@@ -28,7 +28,7 @@ except Exception:
 
 import keyboard
 
-from common import (BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_style, write_bobber_pack, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
+from common import (BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_candidates, bobber_style, write_bobber_pack, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
@@ -1937,11 +1937,18 @@ class App:
             x, y, w, h = roi
             crop = img[y:y + h, x:x + w].copy()
             H, W = img.shape[:2]
-            found = find_bobber(crop, (W / 2 - x, H / 2 - y), max_side=max(40, int(0.075 * H)), style=bobber_style(c))
+            found, fst = None, None
+            for st in bobber_candidates("auto"):                  # 설정 색을 먼저, 안 되면 나머지 색도 찾아서 원인을 알려줌
+                f = find_bobber(crop, (W / 2 - x, H / 2 - y), max_side=max(40, int(0.075 * H)), style=st)
+                if f and (found is None or st == bobber_style(c)):
+                    found, fst = f, st
             if found:
                 bx, by, bw, bh = found
                 cv2.rectangle(crop, (bx - 4, by - 4), (bx + bw + 4, by + bh + 4), (0, 255, 0), 2)
-                msg = "초록 네모 = 찾은 찌. 맞으면 확인"
+                msg = f"초록 네모 = 찾은 찌 ({BOBBER_STYLES[fst]['name']}). 맞으면 확인"
+                if bobber_style(c) not in ("auto", fst):
+                    msg += (f"\n주의: 찌 색 설정은 '{BOBBER_STYLES[bobber_style(c)]['name']}' 인데 화면에선 "
+                            f"'{BOBBER_STYLES[fst]['name']}' 로 보여. 리소스팩이 안 켜졌거나 찌 색 설정이 다른 거야")
             else:
                 msg = "지금 화면에선 찌를 못 찾았어 (찌가 안 보이거나 너무 어두움).\n영역만 저장하려면 확인"
             if not ask(self.root, crop, msg, mode="view", max_size=(900, 500)):
@@ -2032,9 +2039,8 @@ class App:
     def make_bobber_pack(self):
         """찌 리소스팩 zip 을 마크 resourcepacks 폴더에 만듦 (폴더를 못 찾으면 고르게 함)."""
         st = self.bstyle.get()
-        if st == "vanilla":
-            messagebox.showinfo("찌 리소스팩", "찌 색에서 '분홍'이나 '연두'를 골라줘 (기본은 마크 원래 찌라 만들 팩이 없어)")
-            return
+        if st in ("auto", "vanilla"):
+            st = "magenta" if messagebox.askyesno("찌 리소스팩", "어떤 색으로 만들까?\n\n예 = 형광 분홍 (추천)\n아니오 = 형광 연두") else "lime"
         folder = Path(os.environ.get("APPDATA", "")) / ".minecraft" / "resourcepacks"
         if not folder.is_dir():
             picked = filedialog.askdirectory(title="마크 resourcepacks 폴더를 골라줘 (마크 옵션 > 리소스팩 > 팩 폴더 열기)")
@@ -2046,16 +2052,19 @@ class App:
         except OSError as e:
             messagebox.showerror("오류", f"리소스팩을 못 만들었어: {e}")
             return
-        self.cfg["bobber_style"] = st
+        if self.bstyle.get() not in ("auto", "vanilla"):
+            self.cfg["bobber_style"] = st                         # 색을 직접 골랐으면 그대로. 자동/기본이면 설정은 그대로 둠
         save_config(self.cfg)
         name = BOBBER_STYLES[st]["name"]
+        self.cfg["pack_made"] = True
+        save_config(self.cfg)
         self.pack_lbl.config(text=f"만들었어: {path}", fg=OK)
         self.log(f"찌 리소스팩 만듦 ({name}): {path}", "good")
         messagebox.showinfo("찌 리소스팩", f"만들었어!\n{path}\n\n"
                             "1) 마크 옵션 > 리소스팩 에서 'MacroBobber_" + st + "' 을 오른쪽(켬)으로 옮기고 맨 위로 올리기\n"
                             "   ('호환 안 됨' 표시가 떠도 눌러서 켜면 돼)\n"
                             "2) 완료 누르면 적용돼. 안 바뀌면 F3+T\n"
-                            "3) 낚싯대를 던져서 찌가 " + name + " 으로 보이면 성공. 이 프로그램의 찌 색은 이미 맞춰 뒀어\n"
+                            "3) 낚싯대를 던져서 찌가 " + name + " 으로 보이면 성공. 찌 색 설정이 '자동'이면 알아서 맞춰 찾아\n"
                             "4) 설정 탭 '찌 영역'을 다시 지정하면 더 정확해")
 
     def reset_bar(self):

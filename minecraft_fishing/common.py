@@ -28,7 +28,8 @@ DEFAULTS = {
     "bar_search_roi": None,      # 자동 탐색 범위. 비워두면 화면 아래쪽 가운데
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
-    "bobber_style": "vanilla",   # 찌 모양: vanilla(기본 빨강+흰색) / magenta(형광 분홍) / lime(형광 연두) - 리소스팩으로 바꾼 찌
+    "bobber_style": "auto",      # 찌 색: auto(기본·분홍·연두를 차례로 찾음) / vanilla(기본 빨강+흰색) / magenta(형광 분홍) / lime(형광 연두)
+    "pack_made": False,          # 찌 리소스팩을 만든 적 있음 (자동 모드에서 팩 색이 안 보이면 알려주려고)
     "sneak_key": "shift",
     "win_h": None,
     "ref_client": None,          # 위치들을 지정할 때 마크 창 [x, y, w, h] (창이 바뀌면 이걸 기준으로 옮김)
@@ -123,6 +124,7 @@ BOBBER_V_MIN = 40       # 찌 빨간 부분 최소 밝기 (어두운 밤·Moody 
 # 찌 리소스팩 (낚시 매크로가 만들어 주는 형광 찌): 찌 머리를 단색 형광으로 바꾸면 색만으로 쉽게 찾음.
 # hue 는 OpenCV 색상(0~179). 순수 분홍(255,0,255)=150, 순수 연두(0,255,0)=60
 BOBBER_STYLES = {
+    "auto": {"name": "자동 (기본·분홍·연두 다 시도)", "short": "자동"},
     "vanilla": {"name": "기본 (빨강+흰색)", "short": "기본"},
     "magenta": {"name": "형광 분홍", "short": "분홍", "rgb": (255, 0, 255), "hue": (135, 165)},
     "lime": {"name": "형광 연두", "short": "연두", "rgb": (0, 255, 0), "hue": (45, 75)},
@@ -132,6 +134,17 @@ BOBBER_STYLES = {
 def bobber_style(cfg):
     st = (cfg or {}).get("bobber_style", "vanilla")
     return st if st in BOBBER_STYLES else "vanilla"
+
+
+def bobber_candidates(style, last=None):
+    """찌를 찾아볼 색 순서. 자동이면 마지막으로 찾은 색을 먼저, 나머지를 차례로."""
+    if style in ("vanilla", "magenta", "lime"):
+        return [style]
+    order = ["vanilla", "magenta", "lime"]
+    if last in order:
+        order.remove(last)
+        order.insert(0, last)
+    return order
 
 
 def neon_mask(img, style):
@@ -147,6 +160,8 @@ def bobber_mask(img, cfg=None, style=None):
     해질녘 하늘까지 잡혀서. 하늘 같은 큰 덩어리는 find_bobber 의 모양 검사로 걸러냄).
     형광 리소스팩을 쓰면(bobber_style) 그 형광색."""
     style = style or bobber_style(cfg)
+    if style == "auto":                                    # 화면 표시용: 어느 색이든 (찌 찾기는 find_bobber 가 색별로 따로)
+        return (bobber_mask(img, style="vanilla") | neon_mask(img, "magenta") | neon_mask(img, "lime"))
     if style != "vanilla":
         return neon_mask(img, style)
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -160,6 +175,12 @@ def find_bobber(img, center, ignore=None, min_px=6, max_side=80, style="vanilla"
     흰 부분 밝기 기준은 그 찌의 빨간 부분 밝기에 맞춤: 낮에는 예전처럼 110 이상, 어두우면 빨간 부분의 85% 이상
     (찌 그림에서 흰색은 빨강과 같거나 더 밝아서, 어두운 장면에서도 '빨강만큼은 밝은 흰색 계열'이면 찌의 흰 부분).
     형광 찌(style 이 vanilla 가 아님)는 흰 부분이 없으니 '꽉 찬 작은 덩어리' 중 조준점에서 가장 가까운 것."""
+    if style == "auto":                                    # 색을 차례로 (먼저 찾은 것)
+        for st_ in bobber_candidates("auto"):
+            f = find_bobber(img, center, ignore, min_px, max_side, st_)
+            if f:
+                return f
+        return None
     red = bobber_mask(img, style=style)
     if ignore is not None and ignore.shape == red.shape:
         red &= ~ignore
@@ -208,7 +229,7 @@ def _png_bytes(arr):
 
 
 def bobber_pack_files(style):
-    """찌 리소스팩 파일들 {zip 안 경로: 바이트}. 마크 낚시찌 그림(entity/fishing_hook.png, 8x8)의 머리 부분만 단색 형광으로.
+    """찌 리소스팩 파일들 {zip 안 경로: 바이트}. 마크 낚시찌 그림(8x8)의 머리 부분만 단색 형광으로.
     머리는 원래 3x3 인데 5x3 으로 키워서(좌우만) 작은 화면에서도 더 잘 보이게. 낚싯줄·바늘 자리는 그대로 검정."""
     import json
     sp = BOBBER_STYLES[style]
@@ -226,9 +247,12 @@ def bobber_pack_files(style):
         "supported_formats": {"min_inclusive": 34, "max_inclusive": 999},   # 1.21 이후 버전들 (넓게)
         "min_format": 34, "max_format": 999,                                  # 새 방식 (1.21.9 이후)
         "description": f"낚시 매크로 찌 ({sp['name']})"}}
+    png = _png_bytes(tex)
     return {"pack.mcmeta": json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
             "pack.png": _png_bytes(icon),
-            "assets/minecraft/textures/entity/fishing_hook.png": _png_bytes(tex)}
+            # 마크 26.1 부터 찌 그림 경로가 entity/fishing/ 아래로 옮겨짐. 옛 버전(1.21.x 이하)은 옛 경로 -> 둘 다 넣음
+            "assets/minecraft/textures/entity/fishing/fishing_hook.png": png,
+            "assets/minecraft/textures/entity/fishing_hook.png": png}
 
 
 def write_bobber_pack(folder, style):

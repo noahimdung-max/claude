@@ -19,7 +19,7 @@ import pydirectinput
 
 import winapi
 
-from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bobber_style, bracket_runs, durability_value, find_bobber, fish_blob_x,
+from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bobber_style, bobber_candidates, BOBBER_STYLES, bracket_runs, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
@@ -151,6 +151,8 @@ class Macro:
         self.start_at = 0.0
         self.prev_zone = None
         self.pre_mask = None
+        self.pre_masks = {}              # 던지기 전 찌 색별 '원래 있던 물체' 마스크 (찌 색: 자동일 때 색마다)
+        self.style_now = "vanilla"       # 지금 찾은 찌의 색 (자동일 때 마지막으로 찾은 색)
         self.bobber_h = 0
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
         self._sub_tmpls, self._sub_tmpls_for = None, None   # 배율별 자막 템플릿 [(배율, 템플릿)] 과 그 원본
@@ -419,6 +421,19 @@ class Macro:
         img = self.screen.grab(self.cfg["bobber_roi"])
         return img, bobber_mask(img, self.cfg)
 
+    def snapshot_pre_masks(self):
+        """던지기 전: 찌 영역에 원래 있던 같은 색 물체를 색별로 기억 (찌로 착각하지 않게)."""
+        img = self.screen.grab(self.cfg["bobber_roi"])
+        self.pre_masks = {}
+        for st in bobber_candidates(bobber_style(self.cfg), self.style_now):
+            self.pre_masks[st] = cv2.dilate(bobber_mask(img, style=st).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        self.pre_mask = next(iter(self.pre_masks.values()))
+
+    def track_style(self):
+        """찌 추적에 쓸 색: 설정이 자동이면 이번에 찾은 색."""
+        st = bobber_style(self.cfg)
+        return self.style_now if st == "auto" else st
+
     def locate_bobber(self):
         """던진 뒤 탐색 영역에서 새로 나타난 찌('빨간 덩어리 + 흰 부분')를 조준점 가까이에서 찾아 추적 영역 반환."""
         c = self.cfg
@@ -431,8 +446,18 @@ class Macro:
         while time.perf_counter() < deadline:
             self.check()
             img = self.screen.grab(c["bobber_roi"])
-            found = find_bobber(img, center, self.pre_mask, c["min_pixels"], max_side, bobber_style(c))
+            found, fstyle = None, None
+            for st in bobber_candidates(bobber_style(c), self.style_now):       # 자동이면 색을 차례로 시도
+                found = find_bobber(img, center, self.pre_masks.get(st, self.pre_mask), c["min_pixels"], max_side, st)
+                if found:
+                    fstyle = st
+                    break
             if found:
+                if fstyle != self.style_now or not getattr(self, "_style_told", False):
+                    self._style_told = True
+                    self.out(f"[찌] {BOBBER_STYLES[fstyle]['name']} 으로 찾음"
+                             + (" (리소스팩 색이 안 보여. 마크에서 리소스팩이 켜졌는지 확인)" if fstyle == "vanilla" and c.get("pack_made") else ""))
+                self.style_now = fstyle
                 x, y, w, h = found
                 self.bobber_h = h
                 mx, my = max(10, w), max(10, 2 * h)
@@ -702,7 +727,7 @@ class Macro:
     def bobber_frame(self, track):
         """추적 영역에서 (빨강 픽셀 수, 찌 중심 y, 흰 물보라 비율, 원본 이미지)."""
         img = self.screen.grab(track)
-        red = bobber_mask(img, self.cfg)
+        red = bobber_mask(img, style=self.track_style())
         n = int(red.sum())
         y = float(np.nonzero(red)[0].mean()) if n >= self.cfg["min_pixels"] else None
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -1542,8 +1567,7 @@ class Macro:
             self.stop_with(f"낚싯대 내구도 {now}/{self.stats.get('dura_max') or c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
         self.state = "던지는 중"
         if self.cfg["bite_mode"] in ("bobber", "both") and self.cfg["bobber_roi"]:
-            _, m = self.bobber_search_mask()
-            self.pre_mask = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+            self.snapshot_pre_masks()
         self.right_click()               # 던지기
         self.stats["casts"] += 1
         self.record(casts=1)

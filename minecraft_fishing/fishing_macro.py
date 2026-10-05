@@ -20,7 +20,7 @@ import pydirectinput
 import winapi
 
 from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bracket_runs, durability_value, find_bobber, fish_blob_x,
-                    gauge_present, load_config, load_subtitle_template, locate_bar, match_best, save_config,
+                    gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
                     gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point)
@@ -153,6 +153,9 @@ class Macro:
         self.pre_mask = None
         self.bobber_h = 0
         self.sub_tmpl = None             # 자막 템플릿 (지정 후 None 으로 바꾸면 다시 읽음)
+        self._sub_tmpls, self._sub_tmpls_for = None, None   # 배율별 자막 템플릿 [(배율, 템플릿)] 과 그 원본
+        self.sub_pref = 1.0              # 마지막으로 잡힌 자막 배율 (넓은 영역은 이 배율부터 봄)
+        self._sub_wide_n = self._sub_near_n = 0   # 넓은/근처 영역을 훑은 횟수 (다른 배율은 5번에 한 번만 같이 봄)
         self.sub_pos = None              # 마지막으로 입질 자막이 잡힌 위치 (캡처 좌표, 템플릿 왼쪽 위). 다음엔 이 근처부터 찾음
         self._sub_wide_t = 0.0           # 넓은 영역을 마지막으로 훑은 시각
         self.state = "대기"
@@ -491,45 +494,83 @@ class Macro:
         return self.sub_tmpl
 
     SUB_WIDE_EVERY = 0.05      # 마지막 위치 근처에서 못 찾았을 때 넓은 영역을 다시 훑는 간격(초)
+    SUB_SCALES = (0.9, 1.0, 1.1)   # 자막 크기가 조금 달라도 잡도록 이 배율들로 비교해서 가장 높은 점수를 씀
+    SUB_ALT_EVERY = 5          # 마지막으로 잡힌 배율만 매번 보고, 나머지 배율은 이 횟수에 한 번만 같이 봄 (계산량을 늘리지 않으려고)
+
+    def subtitle_templates(self):
+        """[(배율, 템플릿)]. 1.0 은 지금까지 쓰던 것(GUI 배율 변화에 맞춘 크기) 그대로, 나머지는 그것의 0.9·1.1배."""
+        base = self.subtitle_template()
+        if base is None:
+            return []
+        if self._sub_tmpls is None or self._sub_tmpls_for is not base:
+            lst = []
+            for sc in self.SUB_SCALES:
+                t = base if sc == 1.0 else scale_template(base, sc)
+                if t.shape[0] < 3 or t.shape[1] < 3 or any(t.shape == u.shape for _, u in lst):
+                    continue                                 # 너무 작거나 크기가 같으면 의미 없음
+                lst.append((sc, t))
+            self._sub_tmpls, self._sub_tmpls_for, self.sub_pref = lst, base, 1.0
+        return self._sub_tmpls
+
+    def _match_roi(self, roi, tmpls):
+        """roi 를 한 번 캡처해서 배율별 템플릿과 비교 -> (최고 점수, 절대좌표 (x, y), 그 배율)."""
+        g = text_binary(to_gray(self.screen.grab(roi)))
+        bl = getattr(self, "bite_log", None)
+        best_s, best_loc, best_sc = 0.0, None, tmpls[0][0]
+        for sc, t in tmpls:
+            s, loc = match_bin(g, t)
+            if bl is not None:
+                bl["sub_scale_max"][sc] = max(bl["sub_scale_max"].get(sc, 0.0), s)
+            if loc is not None and (best_loc is None or s > best_s):
+                best_s, best_loc, best_sc = s, (roi[0] + loc[0], roi[1] + loc[1]), sc
+        return best_s, best_loc, best_sc
 
     def subtitle_score(self):
-        """자막 일치도. 2단계 탐색: ① 마지막으로 잡힌 위치 근처(좁고 빠름) -> ② 못 찾으면 넓은 영역(subtitle_search_roi).
-        넓은 영역은 0.05초에 한 번만 훑음. 넓은 영역에서 잡히면 그 위치가 새 '마지막 위치'가 돼서 바로 다음 확인은 ①에서 됨.
+        """자막 일치도 (배율 0.9/1.0/1.1 중 최고 점수).
+        2단계 탐색: ① 마지막으로 잡힌 위치 근처(작은 영역) -> ② 못 찾으면 넓은 영역(subtitle_search_roi).
+        넓은 영역은 0.05초에 한 번만 훑음. 두 단계 모두 마지막으로 잡힌 배율만 매번, 다른 배율은 5번에 한 번만 같이 봄.
+        넓은 영역에서 잡히면 그 위치가 새 '마지막 위치'가 돼서 바로 다음 확인은 ①에서 됨.
         근처에서 잡히면 넓은 영역은 안 훑음 (자막은 줄이 쌓이면 위아래로, 다른 자막 폭에 따라 좌우로 조금씩 움직임)."""
         c = self.cfg
-        t = self.subtitle_template()
-        if t is None or not c["subtitle_roi"]:
+        tmpls = self.subtitle_templates()
+        if not tmpls or not c["subtitle_roi"]:
             self.stats["sub"] = None
             return None
         thr = c["subtitle_threshold"]
         wide = getattr(self, "sub_roi", None) or c["subtitle_roi"]
-        th, tw = t.shape[:2]
+        tw, th = max(t.shape[1] for _, t in tmpls), max(t.shape[0] for _, t in tmpls)
         bl = getattr(self, "bite_log", None)
         now = time.perf_counter()
-        score, stage, where = 0.0, "근처", None
+        score, stage, where, hit_sc = 0.0, "근처", None, self.sub_pref
         if self.sub_pos is not None:
             px, py = self.sub_pos
             mx, my = int(tw * 0.6), int(th * 4)            # 좌우로 글자 폭의 60%, 위아래로 글자 높이의 4배
             x0, y0 = max(wide[0], px - mx), max(wide[1], py - my)
             x1, y1 = min(wide[0] + wide[2], px + tw + mx), min(wide[1] + wide[3], py + th + my)
             if x1 - x0 >= tw and y1 - y0 >= th:
-                score, loc = match_best(self.screen.grab([x0, y0, x1 - x0, y1 - y0]), t)
-                where = None if loc is None else (x0 + loc[0], y0 + loc[1])
+                alt = self._sub_near_n % self.SUB_ALT_EVERY == 0
+                self._sub_near_n += 1
+                use = tmpls if alt else [x for x in tmpls if x[0] == self.sub_pref] or tmpls
+                score, where, hit_sc = self._match_roi([x0, y0, x1 - x0, y1 - y0], use)
                 if bl is not None:
                     bl["sub_near"] += 1
+                    bl["sub_alt"] += alt
         if score < thr and (self.sub_pos is None or now - self._sub_wide_t >= self.SUB_WIDE_EVERY):
-            s, loc = match_best(self.screen.grab(wide), t)
             self._sub_wide_t = now
+            alt = self._sub_wide_n % self.SUB_ALT_EVERY == 0
+            self._sub_wide_n += 1
+            use = tmpls if alt else [x for x in tmpls if x[0] == self.sub_pref] or tmpls
+            s, loc, sc = self._match_roi(wide, use)
             if bl is not None:
                 bl["sub_wide"] += 1
+                bl["sub_alt"] += alt
             if s >= score:
-                score, stage = s, "넓게"
-                where = None if loc is None else (wide[0] + loc[0], wide[1] + loc[1])
+                score, stage, where, hit_sc = s, "넓게", loc, sc
         if score >= thr and where is not None:
-            self.sub_pos = where
+            self.sub_pos, self.sub_pref = where, hit_sc
             if bl is not None:
-                if bl["sub_hit"] is None:                  # 이번 입질에서 처음 기준을 넘은 단계/위치
-                    bl["sub_hit"] = f"{stage}@{where[0]},{where[1]}"
+                if bl["sub_hit"] is None:                  # 이번 입질에서 처음 기준을 넘은 단계/위치/배율
+                    bl["sub_hit"] = f"{stage}@{where[0]},{where[1]} 배율 {hit_sc}"
                 bl["sub_hits_" + ("near" if stage == "근처" else "wide")] += 1
         self.stats["sub"] = score
         return score
@@ -593,7 +634,7 @@ class Macro:
             elif not has_sub:
                 mode = "bobber"
         self.bite_log = {"mode": mode, "sub_max": None, "dip_max": None, "sub_near": 0, "sub_wide": 0,
-                         "sub_hits_near": 0, "sub_hits_wide": 0, "sub_hit": None}
+                         "sub_hits_near": 0, "sub_hits_wide": 0, "sub_hit": None, "sub_alt": 0, "sub_scale_max": {}}
         self.logger.write("BITE", f"입질 대기 시작: 모드={mode} (설정 {c['bite_mode']})")
         if mode == "subtitle":
             ok = self.wait_bite_subtitle()
@@ -604,8 +645,11 @@ class Macro:
         f = lambda v, fmt=".2f": "-" if v is None else format(v, fmt)
         self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v2(속도+픽셀감소 0.12초) "
                                   f"사유={bl.get('reason') or '-'} 예전판정도반응={'예' if bl.get('old_same') else '아니오'} "
-                                  f"자막최고={f(bl['sub_max'])} 자막탐색=v2(근처 {bl['sub_near']}회·넓게 {bl['sub_wide']}회 훑음, "
-                                  f"기준 넘은 것 근처 {bl['sub_hits_near']}·넓게 {bl['sub_hits_wide']}, 처음 잡힌 곳={bl['sub_hit'] or '-'}) dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
+                                  f"자막최고={f(bl['sub_max'])} 자막탐색=v3(멀티스케일 {'/'.join(str(x) for x in self.SUB_SCALES)}, 배율별최고 "
+                                  + ' '.join(f'{k}={v:.2f}' for k, v in sorted(bl['sub_scale_max'].items())) +
+                                  f", 근처 {bl['sub_near']}회·넓게 {bl['sub_wide']}회 훑음(그중 모든 배율을 본 횟수 {bl['sub_alt']}), "
+                                  f"기준 넘은 것 근처 {bl['sub_hits_near']}·넓게 {bl['sub_hits_wide']}, 처음 잡힌 곳={bl['sub_hit'] or '-'}) "
+                                  f"dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
                                   f"픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
                                   f"마지막값[{bl.get('last', '-')}] "
                                   f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")

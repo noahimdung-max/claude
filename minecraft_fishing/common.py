@@ -117,22 +117,28 @@ def _bgr(img):
     return f[..., 0], f[..., 1], f[..., 2]
 
 
+BOBBER_V_MIN = 40       # 찌 빨간 부분 최소 밝기 (어두운 밤·Moody 밝기에서도 잡히게. 예전 60)
+
+
 def bobber_mask(img, cfg=None):
     """찌 빨간 부분: 선명한 빨강 (어두울 때도 잡히게 밝기 기준은 낮게). 고른 색은 안 씀
     (해질녘 하늘까지 잡혀서). 하늘 같은 큰 덩어리는 find_bobber 의 모양 검사로 걸러냄."""
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    return ((h <= 10) | (h >= 170)) & (s >= 150) & (v >= 60)
+    return ((h <= 10) | (h >= 170)) & (s >= 150) & (v >= BOBBER_V_MIN)
 
 
 def find_bobber(img, center, ignore=None, min_px=6, max_side=80):
     """찌 찾기: '작은 빨간 덩어리 + 바로 위나 아래에 붙은 흰 부분' 중 center(조준점)에 가장 가까운 것.
-    ignore: 던지기 전부터 있던 빨간 물체 마스크. 반환 (x, y, w, h) 또는 None"""
+    ignore: 던지기 전부터 있던 빨간 물체 마스크. 반환 (x, y, w, h) 또는 None
+    흰 부분 밝기 기준은 그 찌의 빨간 부분 밝기에 맞춤: 낮에는 예전처럼 110 이상, 어두우면 빨간 부분의 85% 이상
+    (찌 그림에서 흰색은 빨강과 같거나 더 밝아서, 어두운 장면에서도 '빨강만큼은 밝은 흰색 계열'이면 찌의 흰 부분)."""
     red = bobber_mask(img)
     if ignore is not None and ignore.shape == red.shape:
         red &= ~ignore
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    light = (hsv[..., 1] <= 110) & (hsv[..., 2] >= 110)       # 흰 부분 (노을에 물들어도)
+    low_sat = hsv[..., 1] <= 110                               # 흰 부분 (노을에 물들어도)
+    val = hsv[..., 2]
     n, _, st, cent = cv2.connectedComponentsWithStats(
         cv2.dilate(red.astype(np.uint8), np.ones((3, 3), np.uint8)))
     best, best_d = None, None
@@ -140,9 +146,14 @@ def find_bobber(img, center, ignore=None, min_px=6, max_side=80):
         x, y, w, h, area = (int(v) for v in st[i])
         if area < min_px or w > max_side or h > max_side:
             continue
+        rv = val[y:y + h, x:x + w][red[y:y + h, x:x + w]]       # 이 덩어리 빨간 픽셀의 밝기
+        if rv.size == 0:
+            continue
+        white_v = min(110, max(BOBBER_V_MIN, 0.85 * float(np.median(rv))))
         band = max(2, h)
-        near_light = light[max(0, y - band):y, x:x + w].sum() + light[y + h:y + h + band, x:x + w].sum()
-        if near_light < 0.3 * area:
+        up = (low_sat & (val >= white_v))[max(0, y - band):y, x:x + w]
+        down = (low_sat & (val >= white_v))[y + h:y + h + band, x:x + w]
+        if up.sum() + down.sum() < 0.3 * area:
             continue
         d = (cent[i][0] - center[0]) ** 2 + (cent[i][1] - center[1]) ** 2
         if best_d is None or d < best_d:

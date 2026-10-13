@@ -7,6 +7,7 @@ python fishing_macro.py --preview  # 검출 결과 실시간 확인(입력 안 �
 python fishing_macro.py --debug    # 실행 + 로그
 """
 import argparse
+import collections
 import ctypes
 import math
 import threading
@@ -29,6 +30,15 @@ pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
 
 
+# 로그를 파일에 안 남겨도(기본) 최근 기록을 메모리에 들고 있어서 앱의 '낚시 분석'에서 바로 볼 수 있게 함
+MEMLOG = collections.deque(maxlen=20000)
+
+
+def mem_add(tag, msg):
+    if tag != "GAME":                     # 미니게임 프레임별 기록은 제외 (너무 많음)
+        MEMLOG.append((time.time(), tag, str(msg)))
+
+
 class FileLog:
     """세부 탭에서 '로그 남기기'를 켜면 exe 옆 macro.log 에 단계별 기록 (1MB 넘으면 자동 교체, 최대 2개)."""
 
@@ -47,6 +57,7 @@ class FileLog:
         import logging
         if tag == "GAME":                # 미니게임 프레임별 기록은 너무 많아서 조작이 느려질 수 있음 -> 요약만
             return
+        mem_add(tag, msg)
         level = {"ERROR": logging.ERROR, "INFO": logging.INFO, "KEY": logging.INFO}.get(tag, logging.DEBUG)
         self.log.log(level, f"{tag:6} {msg}")
 
@@ -60,9 +71,9 @@ class FileLog:
 
 
 class NullLog:
-    """기록 안 함."""
-    def write(self, *a):
-        pass
+    """파일에는 기록 안 함 (메모리에는 최근 기록을 남김)."""
+    def write(self, tag, msg=""):
+        mem_add(tag, msg)
 
     def snap(self, *a):
         pass
@@ -669,14 +680,14 @@ class Macro:
         bl = self.bite_log
         tr = (self.stats.get("trace") or []) if mode != "subtitle" else []
         f = lambda v, fmt=".2f": "-" if v is None else format(v, fmt)
-        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v3(크기+픽셀감소 0.12초, 속도규칙 뺌) "
+        self.logger.write("BITE", f"결과={'입질' if ok else '실패'} 모드={mode} 판정=v4(크기 0.3초 유지+픽셀감소 0.12초, 속도규칙 뺌) "
                                   f"사유={bl.get('reason') or '-'} 예전판정도반응={'예' if bl.get('old_same') else '아니오'} "
                                   f"자막최고={f(bl['sub_max'])} 자막탐색=v3(멀티스케일 {'/'.join(str(x) for x in self.SUB_SCALES)}, 배율별최고 "
                                   + ' '.join(f'{k}={v:.2f}' for k, v in sorted(bl['sub_scale_max'].items())) +
                                   f", 근처 {bl['sub_near']}회·넓게 {bl['sub_wide']}회 훑음(그중 모든 배율을 본 횟수 {bl['sub_alt']}), "
                                   f"기준 넘은 것 근처 {bl['sub_hits_near']}·넓게 {bl['sub_hits_wide']}, 처음 잡힌 곳={bl['sub_hit'] or '-'}) "
                                   f"dip진행최고={f(bl['dip_max'])}(1=기준) 하강속도최고={f(bl.get('speed_max'), '.1f')}h/s "
-                                  f"속도규칙만반응={bl.get('fast_only', 0)}프레임 픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
+                                  f"움찔무시={bl.get('twitch', 0)}번 속도규칙만반응={bl.get('fast_only', 0)}프레임 픽셀감소기각={bl.get('drop_rej', 0)}프레임 예전판정만반응={bl.get('old_only', 0)}프레임 "
                                   f"마지막값[{bl.get('last', '-')}] "
                                   f"trace(가라앉음,물보라 / 최근 120프레임 6칸마다)={[(round(a, 2), round(b, 2)) for a, b in tr[-120:][::6]]}")
         return ok
@@ -758,7 +769,7 @@ class Macro:
         self.state = "입질 기다리는 중 (찌" + (" + 자막)" if both else ")")
         deadline = time.perf_counter() + c["bite_timeout_sec"]
         warm_until = time.perf_counter() + 1.0  # 처음 1초는 평소 상태만 배움
-        hits, lost_since, drop_since = 0, None, None
+        hits, lost_since, drop_since, dip_since = 0, None, None, None
         thr = c["subtitle_threshold"]
         bl = getattr(self, "bite_log", None)
         while time.perf_counter() < deadline:
@@ -790,7 +801,16 @@ class Macro:
                 dy = None if y is None else y - med_y
                 # (1) 크게 내려감: 예전과 같은 기준
                 dip_thr = max(c["bite_dip_px"], 4 * noise_y, 0.35 * h)
-                dip_size = dy is not None and dy > dip_thr
+                dip_raw = dy is not None and dy > dip_thr
+                # 찌가 움찔했다 바로 돌아오는 것(실제 로그: 평소에도 7~15px)은 입질이 아님. 낮아진 채로 0.3초 이상 있어야 입질.
+                # (진짜 입질은 찌가 물에 잠겨 안 보이는 쪽(픽셀 감소)으로 62번 중 60번 맞았음)
+                if dip_raw:
+                    dip_since = dip_since or now
+                elif dip_since is not None:
+                    if bl is not None and now - dip_since < 0.3:
+                        bl["twitch"] = bl.get("twitch", 0) + 1                 # 움찔하고 돌아온 횟수 (무시한 것)
+                    dip_since = None
+                dip_size = dip_raw and now - dip_since >= 0.3
                 # (2) 작게 내려가도 빠르면: 작은 찌·작은 창에서 놓치던 것. 0.3초 안에 찌 높이의 2배/초 이상으로 하강
                 fast_thr = max(2.0, 2.5 * noise_y, 0.2 * h)
                 # 최근 0.3초 안의 아무 시점 대비 '충분히(2px·찌높이 20% 이상) 내려갔고, 그 속도가 빠른' 가장 센 값.
@@ -1085,7 +1105,6 @@ class Macro:
                 cleared.append(name)
         if cleared:
             save_config(c)
-            self.sub_tmpl = None
             self.out("[알림] 화면 밖에 있던 영역을 지웠어: " + ", ".join(cleared) + " -> 설정 탭에서 다시 지정해줘")
             need = self.missing_setup()
             if need:                                      # 입질 감지에 꼭 필요한 영역이 지워졌으면 멈춤

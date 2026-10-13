@@ -32,7 +32,8 @@ from common import (BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_candidates,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
-from fishing_macro import Macro
+import analysis
+from fishing_macro import MEMLOG, Macro
 import winapi
 from winapi import IS_WIN
 
@@ -1561,7 +1562,43 @@ class App:
         p.pack(pady=(8 * S, 0))
         self.colors_cv = tk.Canvas(p.content, width=W, height=30 * S, bg=PANEL, highlightthickness=0)
         self.colors_cv.pack()
+        p = Panel(pg, "낚시 분석 (헛챔질·시간)", self.icons["heart"])
+        p.pack(pady=(8 * S, 0))
+        label(p.content, "지금까지 돌린 기록으로 헛챔질이 얼마나 있었는지, 시간이 어디에 쓰였는지, 고칠 점을 보여줘. "
+                         "문제가 있을 때 '복사'해서 보내주면 원인 찾기 쉬워", fg=MUTED, wraplength=PANEL_W - 40 * S, justify="left").pack(anchor="w")
+        br = tk.Frame(p.content, bg=PANEL)
+        br.pack(fill="x", pady=(6 * S, 0))
+        PixelButton(br, "분석하기", self.run_analysis, "green", width=100 * S).pack(side="left")
+        PixelButton(br, "복사", self.copy_analysis, width=60 * S).pack(side="left", padx=(6 * S, 0))
+        self.an_text = tk.Text(p.content, height=16, width=1, wrap="word", font=FONTS["r"], bg=SOFT, fg=TXT, relief="flat", bd=0,
+                               highlightthickness=0, padx=6 * S, pady=4 * S)
+        self.an_text.pack(fill="x", pady=(6 * S, 0))
+        self.an_text.insert("1.0", "'분석하기'를 누르면 여기에 나와.")
+        self.an_text.config(state="disabled")
         self.draw_log_page()
+
+    def run_analysis(self):
+        """메모리에 남아 있는 최근 기록(없으면 macro.log 파일)을 분석해서 보여줌."""
+        events = [(t, tag, msg) for t, tag, msg in list(MEMLOG)]
+        try:
+            if len(events) >= 5:
+                text = analysis.report(events)
+            else:
+                from common import DATA_DIR
+                text = analysis.report_file(DATA_DIR / "macro.log")
+        except Exception as e:                                 # 분석이 틀려도 앱은 멀쩡해야 함
+            text = f"분석 중 오류: {e}"
+        self.an_text.config(state="normal")
+        self.an_text.delete("1.0", "end")
+        self.an_text.insert("1.0", text)
+        self.an_text.config(state="disabled")
+
+    def copy_analysis(self):
+        text = self.an_text.get("1.0", "end").strip()
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.log("분석 내용을 복사했어", "good")
 
     def draw_log_page(self, hover=None):
         import datetime as dt

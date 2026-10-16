@@ -81,7 +81,7 @@ jobs:
         run: python -c "import app; a = app.App(); [a.show_page(k) or a.root.update() for k in a.pages]; a.toggle_theme(); a.root.update(); a.close(); print('ui ok')"
 
       - name: Make bobber resource packs (also a test of the pack writer)
-        run: python -c "import zipfile; from common import write_bobber_pack; [print(p, zipfile.ZipFile(p).namelist()) for p in (write_bobber_pack('dist', s) for s in ('magenta', 'lime'))]"
+        run: python -c "import zipfile; from common import write_bobber_pack, BOBBER_PACK_VERSIONS; [print(p.name, zipfile.ZipFile(p).namelist()) for p in (write_bobber_pack('dist', s, v) for s in ('magenta', 'lime') for v in BOBBER_PACK_VERSIONS)]"
 
       - uses: actions/upload-artifact@v4
         with:

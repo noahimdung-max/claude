@@ -29,6 +29,7 @@ DEFAULTS = {
     "bar_color": [226, 196, 145],    # [B, G, R] 잡는 구간 양쪽 괄호 ( ) 하늘색
     "fish_color": [115, 227, 109],   # [B, G, R] 물고기 연두색
     "bobber_style": "auto",      # 찌 색: auto(기본·분홍·연두를 차례로 찾음) / vanilla(기본 빨강+흰색) / magenta(형광 분홍) / lime(형광 연두)
+    "pack_version": "both",      # 찌 리소스팩 대상 마크 버전: 26.1.2 / 26.3 / both(둘 다) / all(모든 버전)
     "pack_made": False,          # 찌 리소스팩을 만든 적 있음 (자동 모드에서 팩 색이 안 보이면 알려주려고)
     "sneak_key": "shift",
     "win_h": None,
@@ -228,11 +229,22 @@ def _png_bytes(arr):
     return buf.getvalue()
 
 
-def bobber_pack_files(style):
+# 리소스팩 대상 마크 버전. 팩 형식 번호(min/max_format)는 마크마다 달라서, 맞는 팩을 골라 만들 수 있게 함.
+# 26.1~26.1.2 = 84, 26.3 = 97 (마크 위키 기준). 마크가 만든 26.x 자체 팩도 pack_format 없이 min_format/max_format 만 씀
+BOBBER_PACK_VERSIONS = {
+    "26.1.2": {"name": "26.1.2", "formats": (84, 87)},          # 84(26.1.x) ~ 87
+    "26.3": {"name": "26.3", "formats": (97, 99)},              # 97(26.3.x) ~ 99
+    "all": {"name": "모든 버전", "formats": None},                # 1.21.x 포함 넓게 (옛 방식 + 새 방식 같이)
+}
+
+
+def bobber_pack_files(style, version="all"):
     """찌 리소스팩 파일들 {zip 안 경로: 바이트}. 마크 낚시찌 그림(8x8)의 머리 부분만 단색 형광으로.
-    머리는 원래 3x3 인데 5x3 으로 키워서(좌우만) 작은 화면에서도 더 잘 보이게. 낚싯줄·바늘 자리는 그대로 검정."""
+    머리는 원래 3x3 인데 5x3 으로 키워서(좌우만) 작은 화면에서도 더 잘 보이게. 낚싯줄·바늘 자리는 그대로 검정.
+    version: 26.1.2 / 26.3 (그 버전 번호만 적은 팩) / all (1.21.x 까지 넓게)"""
     import json
     sp = BOBBER_STYLES[style]
+    vp = BOBBER_PACK_VERSIONS[version]
     r, g, b = sp["rgb"]
     tex = np.zeros((8, 8, 4), np.uint8)
     tex[1:4, 2:7] = (r, g, b, 255)
@@ -242,26 +254,34 @@ def bobber_pack_files(style):
     icon[:] = (30, 34, 46, 255)
     icon[20:44, 12:52] = (r, g, b, 255)
     icon[44:60, 30:34] = (0, 0, 0, 255)
-    meta = {"pack": {
-        "pack_format": 34,
-        "supported_formats": {"min_inclusive": 34, "max_inclusive": 999},   # 1.21 이후 버전들 (넓게)
-        "min_format": 34, "max_format": 999,                                  # 새 방식 (1.21.9 이후)
-        "description": f"낚시 매크로 찌 ({sp['name']})"}}
+    pack = {"description": f"낚시 매크로 찌 ({sp['name']} · 마크 {vp['name']})"}
+    if vp["formats"]:
+        lo, hi = vp["formats"]
+        pack.update({"min_format": lo, "max_format": hi})               # 26.x 방식 (마크 자체 팩과 같은 모양)
+    else:
+        pack.update({
+            "pack_format": 34,
+            "supported_formats": {"min_inclusive": 34, "max_inclusive": 999},   # 1.21 이후 버전들 (넓게)
+            "min_format": 34, "max_format": 999})                                # 새 방식 (1.21.9 이후)
     png = _png_bytes(tex)
-    return {"pack.mcmeta": json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
+    return {"pack.mcmeta": json.dumps({"pack": pack}, ensure_ascii=False, indent=2).encode("utf-8"),
             "pack.png": _png_bytes(icon),
-            # 마크 26.1 부터 찌 그림 경로가 entity/fishing/ 아래로 옮겨짐. 옛 버전(1.21.x 이하)은 옛 경로 -> 둘 다 넣음
+            # 마크 26.1 부터 찌 그림 경로가 entity/fishing/ 아래로 옮겨짐 (26.3 도 같음). 옛 버전(1.21.x 이하)은 옛 경로
             "assets/minecraft/textures/entity/fishing/fishing_hook.png": png,
             "assets/minecraft/textures/entity/fishing_hook.png": png}
 
 
-def write_bobber_pack(folder, style):
-    """folder 에 MacroBobber_<색>.zip 을 만듦. 만든 경로 반환."""
+def bobber_pack_name(style, version="all"):
+    return f"MacroBobber_{style}_{version}.zip"
+
+
+def write_bobber_pack(folder, style, version="all"):
+    """folder 에 MacroBobber_<색>_<버전>.zip 을 만듦. 만든 경로 반환."""
     import zipfile
     from pathlib import Path
-    path = Path(folder) / f"MacroBobber_{style}.zip"
+    path = Path(folder) / bobber_pack_name(style, version)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        for name, data in bobber_pack_files(style).items():
+        for name, data in bobber_pack_files(style, version).items():
             z.writestr(name, data)
     return path
 

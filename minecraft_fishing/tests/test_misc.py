@@ -45,25 +45,42 @@ class BobberColor(unittest.TestCase):
 
 
 class ResourcePack(unittest.TestCase):
-    def test_pack_has_both_texture_paths(self):
-        """마크 26.1 부터 찌 그림 위치가 entity/fishing/ 아래로 바뀜 -> 옛 위치와 새 위치 둘 다 있어야 함"""
-        for style in ("magenta", "lime"):
-            files = common.bobber_pack_files(style)
-            self.assertIn("assets/minecraft/textures/entity/fishing/fishing_hook.png", files)
-            self.assertIn("assets/minecraft/textures/entity/fishing_hook.png", files)
-            meta = json.loads(files["pack.mcmeta"].decode("utf-8"))["pack"]
-            self.assertIn("pack_format", meta)
-            self.assertIn("min_format", meta)
-            tex = np.array(Image.open(io.BytesIO(files["assets/minecraft/textures/entity/fishing/fishing_hook.png"])).convert("RGBA"))
-            self.assertEqual(tex.shape[:2], (8, 8))
-            self.assertEqual(int((tex[..., 3] > 0).sum()), 15 + 6)        # 머리 5x3 + 낚싯줄·바늘 6칸
+    PATH_NEW = "assets/minecraft/textures/entity/fishing/fishing_hook.png"
+    PATH_OLD = "assets/minecraft/textures/entity/fishing_hook.png"
 
-    def test_zip_is_valid(self):
+    def test_every_pack_has_both_texture_paths(self):
+        """마크 26.1 부터(26.3 도 같음) 찌 그림 위치가 entity/fishing/ 아래로 바뀜 -> 새 위치가 꼭 있어야 하고, 옛 위치도 같이"""
+        for style in ("magenta", "lime"):
+            for ver in common.BOBBER_PACK_VERSIONS:
+                files = common.bobber_pack_files(style, ver)
+                self.assertIn(self.PATH_NEW, files, (style, ver))
+                self.assertIn(self.PATH_OLD, files, (style, ver))
+                tex = np.array(Image.open(io.BytesIO(files[self.PATH_NEW])).convert("RGBA"))
+                self.assertEqual(tex.shape[:2], (8, 8))
+                self.assertEqual(int((tex[..., 3] > 0).sum()), 15 + 6)        # 머리 5x3 + 낚싯줄·바늘 6칸
+
+    def test_version_specific_packs_use_modern_format_only(self):
+        """마크 26.x 가 직접 쓰는 팩처럼 pack_format 없이 min_format/max_format 만 (26.1.2 = 84, 26.3 = 97)"""
+        for ver, (lo, hi) in (("26.1.2", (84, 87)), ("26.3", (97, 99))):
+            meta = json.loads(common.bobber_pack_files("magenta", ver)["pack.mcmeta"].decode("utf-8"))["pack"]
+            self.assertEqual((meta["min_format"], meta["max_format"]), (lo, hi))
+            self.assertNotIn("pack_format", meta)
+            self.assertNotIn("supported_formats", meta)
+            self.assertIn(ver, meta["description"])
+        self.assertTrue(84 <= 84 <= 87 and 97 <= 97 <= 99)                    # 26.1.2(84.0) / 26.3(97.1) 이 각 범위 안
+
+    def test_all_versions_pack_keeps_old_and_new_fields(self):
+        meta = json.loads(common.bobber_pack_files("lime", "all")["pack.mcmeta"].decode("utf-8"))["pack"]
+        for k in ("pack_format", "supported_formats", "min_format", "max_format"):
+            self.assertIn(k, meta)
+
+    def test_zip_names_and_validity(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            p = common.write_bobber_pack(d, "magenta")
-            self.assertIsNone(zipfile.ZipFile(p).testzip())
-            self.assertEqual(p.name, "MacroBobber_magenta.zip")
+            for ver in common.BOBBER_PACK_VERSIONS:
+                p = common.write_bobber_pack(d, "magenta", ver)
+                self.assertIsNone(zipfile.ZipFile(p).testzip())
+                self.assertEqual(p.name, f"MacroBobber_magenta_{ver}.zip")
 
 
 class TooltipDigits(unittest.TestCase):

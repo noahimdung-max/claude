@@ -28,7 +28,7 @@ except Exception:
 
 import keyboard
 
-from common import (BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_candidates, bobber_style, write_bobber_pack, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
+from common import (BOBBER_PACK_VERSIONS, BOBBER_STYLES, ANVIL_PATH, SUBTITLE_PATH, bobber_candidates, bobber_style, write_bobber_pack, Screen, find_bobber, bracket_mask, durability_value, fish_mask, gauge_present,
                     load_config, make_subtitle_template, save_config, save_subtitle_template, split_view,
                     subtitle_search_roi, view_roi, load_history, read_number,
                     hotbar_points, snap_slot, detect_gui_scale)
@@ -732,6 +732,17 @@ class App:
         self.bstyle = tk.StringVar(value=bobber_style(self.cfg))
         for key, sp in BOBBER_STYLES.items():
             PixelCheck(sr, sp["short"], self.bstyle, self.change_bstyle, radio_value=key).pack(side="left", padx=(0, 8 * S))
+        vr = tk.Frame(pk.content, bg=PANEL)
+        vr.pack(fill="x", pady=(4 * S, 0))
+        label(vr, "마크 버전 :", "b").pack(side="left", padx=(0, 6 * S))
+        self.pver = tk.StringVar(value=self.cfg.get("pack_version", "both"))
+        if self.pver.get() not in ("26.1.2", "26.3", "both", "all"):
+            self.pver.set("both")
+        for key, text in (("26.1.2", "26.1.2"), ("26.3", "26.3"), ("both", "둘 다"), ("all", "모든 버전")):
+            PixelCheck(vr, text, self.pver, self.change_pver, radio_value=key).pack(side="left", padx=(0, 8 * S))
+        label(pk.content, "버전마다 팩 형식 번호가 달라서, 쓰는 마크 버전에 맞는 팩을 골라 만들어. '둘 다'면 26.1.2용·26.3용을 같이 만들어서 "
+                          "마크 리소스팩 목록에서 클릭해서 골라 켤 수 있어. 모르겠으면 '모든 버전'", fg=MUTED, wraplength=PANEL_W - 40 * S,
+              justify="left").pack(anchor="w", pady=(2 * S, 0))
         PixelButton(pk.content, "리소스팩 만들기", self.make_bobber_pack, "green", width=PANEL_W - 40 * S).pack(pady=(6 * S, 0))
         self.pack_lbl = label(pk.content, "", fg=MUTED, wraplength=PANEL_W - 40 * S, justify="left")
         self.pack_lbl.pack(anchor="w", pady=(4 * S, 0))
@@ -881,7 +892,7 @@ class App:
         ]),
         ("찌를 형광색으로 (리소스팩, 선택)", [
             "왼쪽 '설정' 아래 '찌 리소스팩' 에서 분홍/연두 고르고 '리소스팩 만들기'",
-            "마크 옵션 → 리소스팩 에서 만든 팩('MacroBobber_...')을 켜고 맨 위로 (호환 안 됨 표시가 떠도 켜면 돼)",
+            "'마크 버전'에서 쓰는 버전(26.1.2 / 26.3 / 둘 다 / 모든 버전)을 고르고 만들기. 마크 옵션 → 리소스팩 에서 맞는 팩을 켜고 맨 위로 (호환 안 됨 표시가 떠도 켜면 돼)",
             "찌가 형광색으로 보이면 성공. 찌를 색만으로 찾아서 어두운 곳·작은 창에서도 잘 잡혀",
             "서버가 리소스팩을 막거나 강제하면 안 바뀔 수 있어. 그땐 찌 색을 '기본'으로 돌려둬",
         ]),
@@ -2073,6 +2084,10 @@ class App:
             self.macro.pre_mask = None
         self.log("찌 색: " + BOBBER_STYLES[st]["name"] + ("" if st == "vanilla" else " (마크에 리소스팩을 켜야 해)"), "warn")
 
+    def change_pver(self):
+        self.cfg["pack_version"] = self.pver.get()
+        save_config(self.cfg)
+
     def make_bobber_pack(self):
         """찌 리소스팩 zip 을 마크 resourcepacks 폴더에 만듦 (폴더를 못 찾으면 고르게 함)."""
         st = self.bstyle.get()
@@ -2084,8 +2099,11 @@ class App:
             if not picked:
                 return
             folder = Path(picked)
+        versions = ["26.1.2", "26.3"] if self.pver.get() == "both" else [self.pver.get()]
+        paths = []
         try:
-            path = write_bobber_pack(folder, st)
+            for v in versions:
+                paths.append(write_bobber_pack(folder, st, v))
         except OSError as e:
             messagebox.showerror("오류", f"리소스팩을 못 만들었어: {e}")
             return
@@ -2095,10 +2113,13 @@ class App:
         name = BOBBER_STYLES[st]["name"]
         self.cfg["pack_made"] = True
         save_config(self.cfg)
-        self.pack_lbl.config(text=f"만들었어: {path}", fg=OK)
-        self.log(f"찌 리소스팩 만듦 ({name}): {path}", "good")
-        messagebox.showinfo("찌 리소스팩", f"만들었어!\n{path}\n\n"
-                            "1) 마크 옵션 > 리소스팩 에서 'MacroBobber_" + st + "' 을 오른쪽(켬)으로 옮기고 맨 위로 올리기\n"
+        made = ", ".join(p.name for p in paths)
+        self.pack_lbl.config(text=f"만들었어: {made}  (폴더: {folder})", fg=OK)
+        self.log(f"찌 리소스팩 만듦 ({name}): {made}", "good")
+        pick = ("마크 리소스팩 목록에 두 개가 보여. 지금 쓰는 마크 버전에 맞는 걸 하나만 켜줘\n   (" + " / ".join(
+            f"{BOBBER_PACK_VERSIONS[v]['name']}용: {p.name}" for v, p in zip(versions, paths)) + ")")
+        messagebox.showinfo("찌 리소스팩", f"만들었어!\n{folder}\n" + "\n".join(p.name for p in paths) + "\n\n"
+                            "1) 마크 옵션 > 리소스팩 에서 " + (pick if len(paths) > 1 else f"'{paths[0].name}' 을") + " 오른쪽(켬)으로 옮기고 맨 위로 올리기\n"
                             "   ('호환 안 됨' 표시가 떠도 눌러서 켜면 돼)\n"
                             "2) 완료 누르면 적용돼. 안 바뀌면 F3+T\n"
                             "3) 낚싯대를 던져서 찌가 " + name + " 으로 보이면 성공. 찌 색 설정이 '자동'이면 알아서 맞춰 찾아\n"

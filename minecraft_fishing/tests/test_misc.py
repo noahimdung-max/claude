@@ -147,6 +147,37 @@ class RoiSafety(unittest.TestCase):
         self.assertEqual(m.cfg["subtitle_roi"], [100, 100, 100, 20])
 
 
+class Inventory(unittest.TestCase):
+    @staticmethod
+    def _scene(s, border, x0=500, y0=200):
+        """인벤 창: 바깥 테두리 + 회색 바탕 + 빈칸 36개. border = 테두리 두께(게임 픽셀)."""
+        img = np.full((720, 1280, 3), 55, np.uint8)
+        cv2.rectangle(img, (x0, y0), (x0 + common.INV_W * s - 1, y0 + common.INV_H * s - 1), (255, 255, 255), -1)
+        b = border * s
+        cv2.rectangle(img, (x0 + b, y0 + b), (x0 + common.INV_W * s - b - 1, y0 + common.INV_H * s - b - 1),
+                      (common.INV_FILL,) * 3, -1)
+        for sx, sy, size in common.inventory_slots((x0, y0, s)):
+            cv2.rectangle(img, (sx, sy), (sx + size - 1, sy + size - 1), (common.SLOT_EMPTY,) * 3, -1)
+        return img
+
+    def test_vanilla_border(self):
+        for s in (2, 3):
+            self.assertEqual(common.find_inventory(self._scene(s, 2)), (500, 200, s))
+
+    def test_thin_border_server_pack(self):
+        # 실제 inv_debug.png (2560x1369, 배율 2): 회색 바탕이 348x328 이라 못 찾았음 -> 빈칸을 85번 못 셈
+        for s in (2, 3):
+            img = self._scene(s, 1)
+            inv = common.find_inventory(img)
+            self.assertEqual(inv, (500, 200, s))
+            self.assertTrue(all(common.slot_is_empty(img, sl) for sl in common.inventory_slots(inv)))
+
+    def test_not_an_inventory(self):
+        img = np.full((720, 1280, 3), 55, np.uint8)
+        cv2.rectangle(img, (100, 100), (700, 300), (common.INV_FILL,) * 3, -1)
+        self.assertIsNone(common.find_inventory(img))
+
+
 class LogAnalysis(unittest.TestCase):
     @staticmethod
     def _log(cycles):
@@ -190,6 +221,26 @@ class LogAnalysis(unittest.TestCase):
     def test_clean_run_has_no_complaints(self):
         rep = analysis.report(analysis.parse_text(self._log([("caught", "픽셀감소")] * 10)))
         self.assertIn("눈에 띄는 문제 없음", rep)
+
+    def test_idle_gaps_not_counted_as_fishing_time(self):
+        # 실제 macro.log 는 여러 날이 이어 붙어서 처음~끝이 1276분, 실제로 돌린 건 약 173분
+        a = self._log([("caught", "픽셀감소")] * 5)
+        b = self._log([("caught", "픽셀감소")] * 5)
+        shifted = []
+        for line in b.splitlines():                     # 두 번째 묶음을 5시간 뒤로 (정지 후 다시 시작)
+            h = int(line[:2]) + 5
+            shifted.append(f"{h:02d}" + line[2:])
+        text = a + "\n00:01:30.000 [INFO] INFO   [정지]\n" + "\n".join(shifted)
+        s = analysis.summarize(analysis.parse_text(text))
+        self.assertLess(s["span"], 5 * 70)               # 한 묶음 약 78초 x2 (+ 정지까지 몇 초)
+        self.assertGreater(s["span"], 2 * 60)
+
+    def test_inventory_shape_is_not_durability_failure(self):
+        text = self._log([("caught", "픽셀감소")] * 5) + "\n00:02:00.000 [INFO] INFO   " \
+            "[인벤] 인벤 창 모양이 달라서 빈칸은 못 셈 (inv_debug.png 를 보내줘) / 1번 칸 내구도 59/64 (정확)"
+        rep = analysis.report(analysis.parse_text(text))
+        self.assertIn("빈칸을 못 셌어", rep)
+        self.assertNotIn("정밀 내구도", rep)
 
     def test_memory_log_feeds_analysis(self):
         fm.MEMLOG.clear()

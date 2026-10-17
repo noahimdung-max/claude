@@ -64,11 +64,29 @@ def split_cycles(events):
             notes["오류 복구"] += 1
         elif "[복구]" in msg:
             notes["창 닫기 복구"] += 1
-        elif "툴팁 숫자 못 읽음" in msg or "인벤 창 모양" in msg:
-            notes["인벤 확인 실패"] += 1
+        else:
+            if "툴팁 숫자 못 읽음" in msg:
+                notes["내구도 못 읽음"] += 1
+            if "인벤 창 모양" in msg:                     # 내구도는 읽었어도 빈칸 세기만 실패한 경우가 많음
+                notes["인벤 창 못 찾음"] += 1
     if cur:
         cycles.append(cur)
     return cycles, notes
+
+
+def active_time(events, idle=120.0):
+    """실제로 돌린 시간: 정지해 있던 동안과 기록이 오래 끊긴 틈(다른 날·껐다 켬)은 뺌.
+    (macro.log 는 여러 날이 이어 붙어서 처음~끝으로 재면 실제 로그에서 1276분이 나옴, 실제는 약 3시간)"""
+    total, prev, stopped = 0.0, None, False
+    for t, tag, msg in events:
+        if prev is not None and not stopped and 0 <= t - prev <= idle:
+            total += t - prev
+        prev = t
+        if msg.startswith("[정지]"):
+            stopped = True
+        elif msg.startswith("[시작]") or tag == "BITE":
+            stopped = False
+    return total
 
 
 def _stats(a):
@@ -81,7 +99,7 @@ def summarize(events):
     false_ = [c for c in cycles if "miss" in c]
     nobite = [c for c in cycles if c.get("bite_ok") is False]
     done = [c for c in cycles if "mg1" in c or "miss" in c or c.get("bite_ok") is False]
-    span = (events[-1][0] - events[0][0]) if len(events) > 1 else 0.0
+    span = active_time(events)
     wait = [c["bite_t"] - c["start"] for c in caught if "bite_t" in c]
     mg = [c["mg1"] - c["mg0"] for c in caught if "mg0" in c]
     lat = [c["mg0"] - c["bite_t"] for c in caught if "mg0" in c and "bite_t" in c]
@@ -144,8 +162,10 @@ def advice(s):
     if s["gap"] and s["gap"]["mean"] > 2.0:
         out.append(f"미니게임 끝~다음 던지기 사이가 평균 {s['gap']['mean']:.1f}초: 세부 탭 '다시 던지기 전 대기' 와 '미니게임 끝났다고 보는 시간' 을 확인")
     n = s["notes"]
-    if n.get("인벤 확인 실패"):
-        out.append(f"인벤 확인이 {n['인벤 확인 실패']}번 실패: 정밀 내구도를 못 읽었어 (F3+H 켜져 있는지, v1.6.6 이상인지)")
+    if n.get("내구도 못 읽음"):
+        out.append(f"정밀 내구도를 {n['내구도 못 읽음']}번 못 읽었어 (F3+H 켜져 있는지, v1.6.6 이상인지)")
+    if n.get("인벤 창 못 찾음"):
+        out.append(f"인벤 창 모양을 {n['인벤 창 못 찾음']}번 못 알아봐서 빈칸을 못 셌어 (가득 참 정지가 안 됨) -> 최신 버전으로, 그래도 그러면 inv_debug.png 를 보내줘")
     if n.get("오류 복구"):
         out.append(f"오류로 자동 복구한 게 {n['오류 복구']}번: error.txt 를 보내줘")
     if n.get("창 닫기 복구"):

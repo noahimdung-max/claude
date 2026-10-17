@@ -104,6 +104,34 @@ class PauseMenu(unittest.TestCase):
         self.assertIsNone(getattr(m, "game_ref", None))
 
 
+class FpsWatch(unittest.TestCase):
+    """실제 로그: 캡처를 다시 연 뒤 '초당 -3번 / -957번만 그려져서' 헛알림."""
+    def _macro(self, frames):
+        m, _ = bg_macro()
+        m.screen.frames = frames
+        m.said = []
+        m.out = m.said.append
+        return m
+
+    def test_reopened_capture_gives_no_negative_fps(self):
+        m = self._macro(1000)
+        m._fps_mark = (fm.time.perf_counter() - 3, 1000, m.screen)
+        new, _ = bg_macro()
+        m.screen = new.screen                          # 새 캡처: 0부터 다시 셈
+        m.screen.frames = 3
+        m.watch_fps()
+        self.assertEqual(m.said, [])
+        self.assertNotIn("fps", m.stats)
+
+    def test_really_low_fps_still_warns(self):
+        m = self._macro(0)
+        m._fps_mark = (fm.time.perf_counter() - 3, 0, m.screen)
+        m.screen.frames = 24                           # 3초에 24번 = 초당 8번 (실제 로그의 Dynamic FPS 상황)
+        m.watch_fps()
+        self.assertEqual(len(m.said), 1)
+        self.assertIn("초당 8번", m.said[0])
+
+
 class OptionsTxt(unittest.TestCase):
     def _read(self, text):
         with tempfile.TemporaryDirectory() as d:

@@ -1326,8 +1326,10 @@ class Macro:
             return
         now = time.perf_counter()
         last = getattr(self, "_fps_mark", None)
-        self._fps_mark = (now, scr.frames)
-        if not last or now - last[0] < 2:
+        self._fps_mark = (now, scr.frames, scr)
+        # 캡처를 다시 열면(시작·창 크기 변경·끊김 복구) 새 캡처는 0부터 셈 -> 예전 값과 빼면 음수
+        # (실제 로그: '초당 -3번', '초당 -957번' 헛알림)
+        if not last or last[2] is not scr or scr.frames < last[1] or now - last[0] < 2:
             return
         fps = (scr.frames - last[1]) / (now - last[0])
         self.stats["fps"] = fps

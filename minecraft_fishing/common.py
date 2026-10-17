@@ -652,17 +652,19 @@ SLOT_EMPTY = 139                 # 빈 칸 회색
 
 def find_inventory(img):
     """열린 인벤(서바이벌) 창을 찾음. 반환 (왼쪽, 위, GUI 배율) 또는 None.
-    바탕 회색(198) 덩어리 = 창에서 테두리 2칸씩 뺀 172x162."""
+    바탕 회색(198) 덩어리 = 창에서 테두리 2칸씩 뺀 172x162.
+    서버 리소스팩 중엔 테두리가 1칸인 것도 있음 (실제 inv_debug.png: 2배율에서 348x328) -> 174x164."""
     m = (np.abs(img.astype(np.int16) - INV_FILL).max(axis=2) <= 3).astype(np.uint8)
     n, _, st, _ = cv2.connectedComponentsWithStats(m)
     if n < 2:
         return None
     i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
     x, y, w, h, _ = (int(v) for v in st[i])
-    s = round(w / (INV_W - 4))
-    if s < 1 or abs(w - (INV_W - 4) * s) > s or abs(h - (INV_H - 4) * s) > 2 * s:
-        return None
-    return x - 2 * s, y - 2 * s, s
+    for b in (2, 1):                                     # 테두리 두께 (게임 픽셀)
+        s = round(w / (INV_W - 2 * b))
+        if s >= 1 and abs(w - (INV_W - 2 * b) * s) <= s and abs(h - (INV_H - 2 * b) * s) <= 2 * s:
+            return x - b * s, y - b * s, s
+    return None
 
 
 def guess_inventory(w, h, s):

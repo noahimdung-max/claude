@@ -45,7 +45,8 @@ def app_version():
     m = re.search(r"-v([\w.]+)\.exe$", sys.executable) if getattr(sys, "frozen", False) else None
     return m.group(1) if m else "dev"
 
-SIZES = {"small": (440, 780), "mid": (520, 900), "large": (640, 1040)}
+SIZES = {"small": (900, 660), "mid": (1060, 780), "large": (1280, 900)}
+LAYOUT = 2                                # 화면 배치 버전: 바뀌면 예전에 기억한 창 크기는 안 씀 (세로로 긴 창 -> 가로 창)
 MINI_SIZE = (400, 230)
 
 ITEM_SCENES = {
@@ -212,12 +213,16 @@ class WebApp:
         self._catch_until = 0.0
         self._img_t = 0.0
         self._closing = False
+        self._early_logs = []
         self.cfg.setdefault("win_preset", "mid")
         self.cfg.setdefault("topmost", True)
         self.cfg.setdefault("remember_window", True)
 
     # ---------- 화면과 주고받기 ----------
     def push(self, kind, data=None):
+        if not self.loaded.is_set() and kind == "log":
+            self._early_logs.append(data)                 # 화면이 뜨기 전 기록은 모아뒀다가 처음에 보냄
+            return
         if not self.window or not self.loaded.is_set() or self._closing:
             return
         try:
@@ -311,9 +316,10 @@ class WebApp:
         return {k: c.get(k) for k in keys}
 
     def initial(self):
+        logs, self._early_logs = self._early_logs[-5:], []
         self.loaded.set()
         return {"cfg": self.public_cfg(), "status": self.status(), "version": app_version(),
-                "packVersions": list(BOBBER_PACK_VERSIONS), "mini": self.mini}
+                "packVersions": list(BOBBER_PACK_VERSIONS), "mini": self.mini, "logs": logs}
 
     def status(self):
         c = self.cfg
@@ -972,6 +978,10 @@ class WebApp:
 
     def first_geometry(self):
         c = self.cfg
+        if c.get("win_layout") != LAYOUT:
+            for k in ("win_w", "win_h", "win_x", "win_y"):
+                c.pop(k, None)
+            c["win_layout"], c["win_preset"] = LAYOUT, "mid"
         pw, ph = SIZES.get(c.get("win_preset"), SIZES["mid"])
         if c.get("remember_window", True) and c.get("win_w"):
             w, h = self.fit(int(c["win_w"]), int(c.get("win_h") or ph))

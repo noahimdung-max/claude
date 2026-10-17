@@ -52,36 +52,35 @@
   </defs>
 </svg>
 
-<div class="app" id="app">
-  <header class="top">
-    <div class="brand">
-      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
-        <rect width="40" height="40" rx="12" fill="url(#lg)"/>
-        <path d="M22 9v14a5 5 0 0 1-10 0" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
-        <path d="M12 23l-2.5-2.5" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
-        <circle cx="22" cy="8" r="2.4" fill="#FFD15C"/>
-        <path d="M6 33q4-3 8 0t8 0 8 0 8 0" fill="none" stroke="#BFE7F7" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      <div>
-        <h1>마크 낚시 매크로</h1>
-        <p><span id="ver">v-</span> · 물고기 따라가기 자동</p>
-      </div>
+<div class="shell" id="app">
+<aside class="side">
+  <div class="brand">
+    <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="12" fill="url(#lg)"/>
+      <path d="M22 9v14a5 5 0 0 1-10 0" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M12 23l-2.5-2.5" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+      <circle cx="22" cy="8" r="2.4" fill="#FFD15C"/>
+      <path d="M6 33q4-3 8 0t8 0 8 0 8 0" fill="none" stroke="#BFE7F7" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>마크 낚시</h1>
+      <p>물고기 따라가기 자동</p>
     </div>
-    <div class="tools">
-      <button class="btn" type="button" id="topBtn" aria-pressed="true" title="다른 창보다 항상 위에 둠">
-        <svg width="16" height="16" aria-hidden="true"><use href="#i-pin"/></svg><span>항상 위</span></button>
-      <button class="btn" type="button" id="miniBtn" title="게임 옆에 띄우는 작은 창">
-        <svg width="16" height="16" aria-hidden="true"><use href="#i-mini"/></svg><span>미니 모드</span></button>
-    </div>
-  </header>
-
+  </div>
   <nav class="tabs" aria-label="화면">
-    <button class="tab" type="button" data-go="home" aria-current="page"><svg width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg>홈</button>
-    <button class="tab" type="button" data-go="log"><svg width="16" height="16" aria-hidden="true"><use href="#i-chart"/></svg>기록</button>
-    <button class="tab" type="button" data-go="rod"><svg width="16" height="16" aria-hidden="true"><use href="#i-rod"/></svg>낚싯대</button>
-    <button class="tab" type="button" data-go="settings"><svg width="16" height="16" aria-hidden="true"><use href="#i-gear"/></svg>설정</button>
-    <button class="tab" type="button" data-go="guide"><svg width="16" height="16" aria-hidden="true"><use href="#i-book"/></svg>가이드</button>
+    <button class="tab" type="button" data-go="home" aria-current="page"><svg width="18" height="18" aria-hidden="true"><use href="#i-home"/></svg><span>홈</span></button>
+    <button class="tab" type="button" data-go="log"><svg width="18" height="18" aria-hidden="true"><use href="#i-chart"/></svg><span>기록</span></button>
+    <button class="tab" type="button" data-go="rod"><svg width="18" height="18" aria-hidden="true"><use href="#i-rod"/></svg><span>낚싯대</span></button>
+    <button class="tab" type="button" data-go="settings"><svg width="18" height="18" aria-hidden="true"><use href="#i-gear"/></svg><span>설정</span></button>
+    <button class="tab" type="button" data-go="guide"><svg width="18" height="18" aria-hidden="true"><use href="#i-book"/></svg><span>가이드</span></button>
   </nav>
+  <div class="side-foot">
+    <div class="keys"><b>F8</b> 시작/정지 · <b>F7</b> 화면 지정 · <b>F12</b> 종료</div>
+    <p class="ver" id="ver">v-</p>
+  </div>
+</aside>
+
+<div class="main" id="mainScroll">
 
   <div class="f7bar" id="f7bar" role="status" hidden>
     <div><b id="f7text"></b><div class="desc" style="color:#7A3E06">마크로 넘어가서 그 장면에서 F7 을 누르면 이 창으로 돌아와요</div></div>
@@ -91,15 +90,17 @@
   <!-- ================= 홈 ================= -->
   <main data-page="home" style="display:flex;flex-direction:column;gap:14px">
     <section class="banner" aria-label="낚시 풍경">
-      <svg class="scene st-idle" id="scene" viewBox="0 0 520 210" role="img" aria-label="낚시꾼 캐릭터: 쉬는 중">
-        <rect width="520" height="210" fill="url(#sky)"/>
-        <circle cx="438" cy="50" r="46" fill="url(#sunGlow)"/>
-        <circle cx="438" cy="50" r="20" fill="#FFD66B"/>
+      <svg class="scene st-idle" id="scene" viewBox="0 28 760 164" preserveAspectRatio="xMinYMid slice" role="img" aria-label="낚시꾼 캐릭터: 쉬는 중">
+        <rect width="1040" height="210" fill="url(#sky)"/>
+        <circle cx="640" cy="62" r="46" fill="url(#sunGlow)"/>
+        <circle cx="640" cy="62" r="20" fill="#FFD66B"/>
         <g class="cloud" fill="#FFFFFF" opacity=".92">
-          <path d="M40 46a12 12 0 0 1 22-6 10 10 0 0 1 17 8H40z"/>
-          <path d="M300 30a10 10 0 0 1 18-5 8 8 0 0 1 14 7h-32z"/>
+          <path d="M40 52a12 12 0 0 1 22-6 10 10 0 0 1 17 8H40z"/>
+          <path d="M300 42a10 10 0 0 1 18-5 8 8 0 0 1 14 7h-32z"/>
+          <path d="M500 58a11 11 0 0 1 20-5 9 9 0 0 1 15 7h-35z"/>
         </g>
-        <path d="M0 116 Q60 108 120 114 T260 112 T400 114 T520 110 V120 H0Z" fill="#7BB7C9" opacity=".55"/>
+        <path d="M0 116 Q60 108 120 114 T260 112 T400 114 T540 112 T680 114 T820 110 T1040 112 V120 H0Z" fill="#7BB7C9" opacity=".55"/>
+        <g fill="#8AB7C6" opacity=".7"><path d="M560 114 l14 -10 12 10z"/><path d="M590 114 l10 -7 9 7z"/></g>
         <g class="wave-a"><path d="M0 124 Q32.5 117 65 124 T130 124 T195 124 T260 124 T325 124 T390 124 T455 124 T520 124 T585 124 T650 124 T715 124 T780 124 T845 124 T910 124 T975 124 T1040 124 V210 H0Z" fill="url(#sea)"/></g>
         <g class="glint" fill="#FFFFFF">
           <rect x="360" y="140" width="26" height="2" rx="1"/><rect x="420" y="156" width="18" height="2" rx="1"/><rect x="230" y="168" width="22" height="2" rx="1"/>
@@ -174,10 +175,28 @@
       <div class="tr"><span class="chip"><span style="font-size:13px;color:var(--muted)">이번 낚시</span><span class="jua" style="font-size:18px" id="bannerCount">0마리</span></span></div>
     </section>
 
+    <div class="headline">
+      <div>
+        <h2 class="hello">오늘도 손맛 좋은 하루 되세요</h2>
+        <p class="desc">물을 바라보고 게임 안에서 F8 을 누르거나 아래 버튼을 누르세요.</p>
+      </div>
+      <div class="tools">
+        <button class="btn" type="button" id="topBtn" aria-pressed="true" title="다른 창보다 항상 위에 둠">
+          <svg width="16" height="16" aria-hidden="true"><use href="#i-pin"/></svg><span>항상 위</span></button>
+        <button class="btn" type="button" id="miniBtn" title="게임 옆에 띄우는 작은 창">
+          <svg width="16" height="16" aria-hidden="true"><use href="#i-mini"/></svg><span>미니</span></button>
+        <div class="seg" role="group" aria-label="창 크기">
+          <button type="button" data-size="small" aria-pressed="false">작게</button>
+          <button type="button" data-size="mid" aria-pressed="true">보통</button>
+          <button type="button" data-size="large" aria-pressed="false">크게</button>
+        </div>
+      </div>
+    </div>
+
     <section aria-label="시작과 정지" style="display:flex;flex-direction:column;gap:10px">
       <button type="button" class="run" id="runBtn"><svg width="22" height="22" aria-hidden="true"><use href="#i-play" id="runIcon"/></svg><span id="runLabel">낚시 시작</span><span class="kbd">F8</span></button>
-      <p class="hint">시작하면 마크 창으로 자동 전환돼요 · 마크 창을 벗어나면 잠깐 멈춤 · 완전 종료 F12</p>
-      <p class="hint" id="macroState" aria-live="polite">정지됨</p>
+      <div class="steprow">
+        <span class="nowstate" id="macroState" aria-live="polite">정지됨</span>
       <ol class="steps" aria-label="진행 단계" id="steps">
         <li class="step" data-k="cast"><span class="pip"></span>던지기</li>
         <li class="step" data-k="wait"><span class="pip"></span>기다리기</li>
@@ -185,6 +204,7 @@
         <li class="step" data-k="reel"><span class="pip"></span>끌어올리기</li>
         <li class="step" data-k="caught"><span class="pip"></span>낚음</li>
       </ol>
+      </div>
     </section>
 
     <section class="stats" aria-label="통계">
@@ -198,7 +218,9 @@
         <div><div class="k">성공률</div><div class="v" id="sRate">0%</div><div class="s">켠 뒤로 낚음 ÷ 던짐</div></div></div>
     </section>
 
+    <div class="duo">
     <section class="card" aria-label="실시간 상태">
+      <h2 style="font-size:17px">실시간 상태</h2>
       <div class="live-grid">
         <div><div class="k desc">입질 감지</div><div class="jua" style="font-size:18px;margin-top:2px" id="biteText">-</div></div>
         <div>
@@ -227,6 +249,7 @@
       <div class="row"><h2 id="logTitle" style="font-size:17px">활동 기록</h2><span class="desc">최근 5개</span></div>
       <ul class="loglist" id="logList" aria-live="polite"></ul>
     </section>
+    </div>
   </main>
 
   <!-- ================= 기록 ================= -->
@@ -409,16 +432,10 @@
   <main data-page="guide" hidden style="display:flex;flex-direction:column;gap:14px" id="guidePage"></main>
 
   <footer class="foot">
-    <div class="inline">
-      <span class="desc">창 크기</span>
-      <div class="seg" role="group" aria-label="창 크기">
-        <button type="button" data-size="small" aria-pressed="false">작게</button>
-        <button type="button" data-size="mid" aria-pressed="true">보통</button>
-        <button type="button" data-size="large" aria-pressed="false">크게</button>
-      </div>
-    </div>
+    <span class="desc">창 크기와 위치는 자동으로 기억돼요</span>
     <svg class="flag" width="54" height="36" role="img" aria-label="태극기"><use href="#flag"/></svg>
   </footer>
+</div>
 </div>
 
 <!-- ================= 미니 모드 ================= -->

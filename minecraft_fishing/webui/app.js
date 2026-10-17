@@ -88,7 +88,7 @@
     page = p;
     $$('main[data-page]').forEach(m => { m.hidden = m.dataset.page !== p; });
     $$('.tab').forEach(t => t.setAttribute('aria-current', t.dataset.go === p ? 'page' : 'false'));
-    window.scrollTo(0, 0);
+    $('#mainScroll').scrollTop = 0;
     api('set_page', p);
   }
 
@@ -619,6 +619,7 @@
     $('#ver').textContent = init.version === 'dev' ? '개발판' : 'v' + init.version;
     fillCfg();
     onStatus(init.status);
+    (init.logs || []).forEach(addLog);
     if (init.mini) document.body.classList.add('mini');
   }
 

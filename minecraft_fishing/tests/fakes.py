@@ -51,6 +51,8 @@ fm.save_config = lambda c: None
 fm.save_history = lambda *a, **k: None
 fm.alert = lambda m: EVENTS.append(("alert", m))
 fm.notify = lambda *a: None
+SAVED = []                                    # 진단용으로 저장하려던 그림 이름 (실제 파일은 안 씀)
+fm.save_debug_image = lambda img, name: SAVED.append(name)
 common.save_config = lambda c: None
 
 

@@ -132,6 +132,20 @@ class FpsWatch(unittest.TestCase):
         self.assertIn("초당 8번", m.said[0])
 
 
+class DebugImages(unittest.TestCase):
+    """실제 v1.8.1 로그: '바 못 찾음' 6번인데 그림이 하나도 안 남아서 원인을 못 봤음."""
+    def test_bar_not_found_saves_picture(self):
+        m, _ = bg_macro()
+        fakes.SAVED.clear()
+        self.assertFalse(m.find_bar(save_debug=True))   # 미니게임 없는 화면
+        self.assertEqual(fakes.SAVED, ["bar_debug.png"])
+
+    def test_file_log_snap_saves_named_picture(self):
+        fakes.SAVED.clear()
+        fm.FileLog.snap(None, None, "미니게임_안뜸")
+        self.assertEqual(fakes.SAVED, ["snap_미니게임_안뜸.png"])
+
+
 class OptionsTxt(unittest.TestCase):
     def _read(self, text):
         with tempfile.TemporaryDirectory() as d:

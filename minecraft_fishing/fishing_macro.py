@@ -61,8 +61,9 @@ class FileLog:
         level = {"ERROR": logging.ERROR, "INFO": logging.INFO, "KEY": logging.INFO}.get(tag, logging.DEBUG)
         self.log.log(level, f"{tag:6} {msg}")
 
-    def snap(self, *a):
-        pass
+    def snap(self, img, name):
+        """문제 순간 화면 (미니게임_안뜸·구간_못찾음 등). 이름마다 최신 1장만 덮어씀 -> 파일이 안 쌓임."""
+        save_debug_image(img, f"snap_{name}.png")
 
     def config(self, cfg):
         keys = ("bite_mode", "background", "bar_roi", "subtitle_roi", "durability_max", "durability_stop_pct",
@@ -530,10 +531,12 @@ class Macro:
         return None
 
     def save_debug(self, img, name=None, what=None):
+        # 예전엔 그림을 안 남겨서 '바 못 찾음'·'찌 못 찾음' 원인을 로그로 알 수 없었음 (실제 v1.8.1 로그: 바 못 찾음 6번, 그림 없음)
+        save_debug_image(img, name or "bar_debug.png")
         if what:
-            self.out(f"[{what}]")
+            self.out(f"[{what}] ({name} 저장)")
             return
-        self.out("[바 못 찾음] 미니게임이 떠 있을 때 '직접'으로 바를 지정해줘")
+        self.out("[바 못 찾음] 미니게임이 떠 있을 때 '직접'으로 바를 지정해줘 (안 되면 bar_debug.png 를 보내줘)")
 
     def bar_state(self):
         """(미니게임 중인지, 잡는 구간 중심 x, 물고기 x). 바 좌표 기준."""
@@ -953,7 +956,7 @@ class Macro:
         prev_zone, prev_t, vel = zone, t0, 0.0
         prev_fish, prev_ft, fvel = fish, t0, 0.0
         frame_dt, last_frame = 0.01, t0
-        n = n_inactive = n_nozone = n_inside = n_toggle = 0
+        n = n_inactive = n_nozone = n_inside = n_toggle = n_down = 0
         snapped_lost = snapped_nozone = False
         lost_img, lost_n = None, 0
         nozone_since = None
@@ -1020,6 +1023,7 @@ class Macro:
                     self.set_shift(False)   # 오른쪽으로
                 toggled = before != self.shift_down
                 n_toggle += toggled
+                n_down += self.shift_down
                 if self.zone_w and abs(fish - zone) < self.zone_w / 2:
                     n_inside += 1
                 if toggled or raw_zone is None or n % 10 == 0:
@@ -1045,7 +1049,7 @@ class Macro:
             notify(c["discord_webhook"], f"{color or ''} 물고기 낚음 (이번 {self.run_caught}마리)")
         self.logger.write("SUMMARY", f"미니게임 {dur:.1f}초, 끝난 이유: {end_reason}, 프레임 {n}, "
                                      f"물고기가 구간 안 {n_inside}/{n}, 구간 못찾음 {n_nozone}, 중간에 놓친 프레임 {n_inactive}, "
-                                     f"Shift 전환 {n_toggle}회")
+                                     f"Shift 전환 {n_toggle}회, Shift 누른 프레임 {n_down}, 구간 폭 {self.zone_w:.0f}px, 바 {c['bar_roi']}")
         self.out(f"미니게임 끝 (총 {self.stats['caught']}회, {dur:.1f}초, 초당 {n / max(dur, 0.1):.0f}번 확인)")
         self.fails = 0
 

@@ -295,6 +295,8 @@ class WGCScreen:
         self._img, self._lock, self._stop = None, threading.Lock(), False
         self.frames = 0
         self.closed = False
+        self.last_frame = time.perf_counter()
+        self._geom_t = 0.0
         kw = dict(cursor_capture=False, window_hwnd=int(hwnd), minimum_update_interval=12)
         try:
             cap = WindowsCapture(draw_border=False, **kw)     # 노란 테두리 끔 (윈도우 11)
@@ -310,6 +312,7 @@ class WGCScreen:
             with self._lock:
                 self._img = img
                 self.frames += 1
+                self.last_frame = time.perf_counter()
 
         @cap.event
         def on_closed():
@@ -328,6 +331,18 @@ class WGCScreen:
         x, y, w, h = client_rect(self.hwnd)
         self.mon = {"left": 0, "top": 0, "width": x + w, "height": y + h}
         self._origin = frame_origin(self.hwnd)
+        self._geom_t = time.perf_counter()
+
+    def refresh_geom(self):
+        """창을 옮겼으면 캡처 이미지의 화면 기준 위치도 따라감 (안 하면 옮긴 만큼 엉뚱한 곳을 잘라 읽음)."""
+        try:
+            self._update_geom()
+        except Exception:
+            pass
+
+    def stalled(self, sec=3.0):
+        """새 화면이 sec 초 넘게 안 오거나 캡처가 끊겼으면 True (다시 열어야 함)."""
+        return self.closed or time.perf_counter() - self.last_frame > sec
 
     def stop(self):
         self._stop = True
@@ -342,6 +357,8 @@ class WGCScreen:
         return img is None or float(img.mean()) < 2.0
 
     def grab(self, roi):
+        if time.perf_counter() - self._geom_t > 0.25:
+            self.refresh_geom()
         with self._lock:
             img = self._img
         x, y, w, h = roi

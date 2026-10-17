@@ -24,7 +24,7 @@ from common import (Screen, fish_color_name, durability_roi_in_slot, selected_sl
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
                     split_view, view_roi, load_history, save_history, history_day, find_inventory,
                     inventory_slots, slot_is_empty, read_tooltip_durability, guess_inventory,
-                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point, roi_in_bounds)
+                    gui_overlay, save_debug_image, read_number, turn_pixels, hotbar_index, view_shift, view_focal_px, ANVIL_PATH, remap_rect, remap_point, roi_in_bounds, pause_on_blur_setting)
 
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -206,6 +206,7 @@ class Macro:
             self.run_caught = 0
             self.depleted = set()
             self.home_ref = None
+            self.game_ref = None
             self.inv_off, self.inv_fails = False, 0
             self.inv_empty, self.inv_map = None, None
             self.err_retries = 0
@@ -247,8 +248,9 @@ class Macro:
         if hasattr(self.screen, "stop"):
             self.screen.stop()
 
-    def setup_io(self):
-        """시작할 때: 마크 창 찾기 + (백그라운드 모드면) 창 캡처 확인 / (일반이면) 창을 앞으로."""
+    def setup_io(self, reopen=False):
+        """시작할 때: 마크 창 찾기 + (백그라운드 모드면) 창 캡처 확인 / (일반이면) 창을 앞으로.
+        reopen=True: 낚시 도중에 캡처만 다시 여는 것 (어두운 장면 때문에 '검은 화면'으로 오해해 정지하지 않음)."""
         c = self.cfg
         self.hwnd = winapi.find_minecraft()
         self.bg_mode = False
@@ -264,14 +266,18 @@ class Macro:
             self.close_screen()
             ws, how = winapi.open_window_screen(self.hwnd)
             self.capture_name = how
-            if ws.is_black():
+            if ws.is_black() and not reopen:
                 self.running = False
                 self.out("[정지] 이 PC에선 가려진 마크 화면을 캡처할 수 없어 -> 백그라운드 모드 끄고 써줘")
                 raise Stop
             self.screen, self.bg_mode = ws, True
             prio, throttle = winapi.keep_awake(self.hwnd)
-            self.out(f"백그라운드 모드({how}): 다른 창 써도 돼 (마크 F3+P 켜져 있어야 함)"
-                     + ("" if throttle else " / 마크 절전 제한 끄기 실패: 가이드 참고"))
+            if not reopen:
+                self.out(f"백그라운드 모드({how}): 다른 창 써도 돼 (마크 F3+P 로 '창 뒤로 가도 일시정지 안 함' 이어야 함)"
+                         + ("" if throttle else " / 마크 절전 제한 끄기 실패: 가이드 참고"))
+                if pause_on_blur_setting():
+                    self.out("[주의] 마크 옵션에 '창이 뒤로 가면 일시정지'가 켜져 있어. 마크에서 F3+P 를 눌러 꺼줘 "
+                             "(켜져 있으면 다른 창을 쓰는 순간 일시정지 메뉴가 떠서 낚시대를 못 던져)")
         else:
             self.close_screen()
             self.screen = Screen(c["monitor"])
@@ -282,6 +288,49 @@ class Macro:
         self.follow_window()
         self.sanitize_rois()
         self.adapt_gui_scale()
+
+    def bg_upkeep(self):
+        """백그라운드 모드 점검 (한 판마다): 캡처가 끊겼으면 다시 열고, 창이 바뀌었으면 위치들을 맞춤.
+        창을 옮기기만 했으면 캡처를 다시 열지 않고 영역만 옮김 (다시 열면 3초 가까이 걸리고 그동안 못 던짐)."""
+        now = time.perf_counter()
+        scr = self.screen
+        if hasattr(scr, "stalled") and scr.stalled() and now >= getattr(self, "_reopen_ok_at", 0):
+            self._reopen_ok_at = now + 15
+            self.out("[알림] 마크 화면 캡처가 멈춰서 다시 열게")
+            self.setup_io(reopen=True)
+            return
+        if not self.window_changed() or now < getattr(self, "_refit_ok_at", 0):
+            return
+        ref, cur = self.cfg.get("ref_client"), self.game_rect()
+        if ref and cur[2:] == list(ref)[2:] and hasattr(scr, "refresh_geom"):
+            scr.refresh_geom()
+            if self.follow_window():
+                self.adapt_gui_scale()
+        else:
+            self.setup_io(reopen=True)                # 크기가 바뀜: 캡처도 새 크기로 (안에서 follow_window)
+        if self.window_changed():                     # 못 맞춘 채로 매 판 되풀이하지 않게
+            self._refit_ok_at = now + 10
+
+    def bg_guard(self):
+        """백그라운드 모드: 던지기 전에 마크에 창(일시정지 메뉴 등)이 떠 있으면 닫음.
+        떠 있는 채로 우클릭하면 아무 일도 안 일어나 입질 기다리느라 시간만 감."""
+        if not self.bg_mode:
+            return
+        try:
+            now = self.view()
+        except Exception:
+            return
+        ref = getattr(self, "game_ref", None)
+        if ref is None:
+            self.game_ref = now                       # 첫 판: 지금 화면을 '정상 화면' 기준으로 (복구 때도 씀)
+            return
+        if not gui_overlay(ref, now, ratio=0.55):
+            return
+        self.out("[복구] 던지기 전에 마크에 창(일시정지 메뉴 등)이 떠 있어서 닫았어")
+        self.close_gui(ref)
+        self.sleep(0.8)
+        if gui_overlay(ref, self.view(), ratio=0.55):
+            self.stop_with("마크 창이 닫아도 다시 떠 -> 마크에서 F3+P 로 '창 뒤로 가면 일시정지'를 꺼줘 (켜져 있으면 낚시대를 못 던져) -> 정지")
 
     def adapt_gui_scale(self):
         """마크 GUI 배율이 설정 때와 다르면 (자동 배율은 창 크기 따라 바뀜) 자막 위치·크기를 비율대로 맞추고
@@ -1552,10 +1601,10 @@ class Macro:
 
     def cycle(self):
         c = self.cfg
-        if self.window_changed():                     # 최대화/이전 크기로 -> 지정한 위치들을 새 창에 맞춤
-            if self.bg_mode:
-                self.setup_io()                       # 창 캡처도 새 크기로 다시 잡음 (안에서 follow_window)
-            elif self.follow_window():
+        if self.bg_mode:
+            self.bg_upkeep()
+        elif self.window_changed():                   # 최대화/이전 크기로 -> 지정한 위치들을 새 창에 맞춤
+            if self.follow_window():
                 self.adapt_gui_scale()
         if self._hist_t is None:
             self._hist_t = time.time()
@@ -1585,6 +1634,7 @@ class Macro:
             now = "1~2" if kind == "low" else str(val)
             self.stop_with(f"낚싯대 내구도 {now}/{self.stats.get('dura_max') or c['durability_max']} (멈춤 기준 {c['durability_stop_pct']}% 이하) -> 정지")
         self.state = "던지는 중"
+        self.bg_guard()
         if self.cfg["bite_mode"] in ("bobber", "both") and self.cfg["bobber_roi"]:
             self.snapshot_pre_masks()
         self.right_click()               # 던지기

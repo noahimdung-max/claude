@@ -1,5 +1,6 @@
 import colorsys
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -759,6 +760,21 @@ def find_tooltip(img, with_mask=False):
     inside = (lab[y:y + h, x:x + w] == i).astype(np.uint8)
     inside = cv2.morphologyEx(inside, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))   # 글자 자리까지 덮기
     return (x, y, w, h), inside > 0
+
+
+def pause_on_blur_setting(dirs=None):
+    """마크 옵션(options.txt)의 '창이 뒤로 가면 일시정지(pauseOnLostFocus)'. True/False, 파일을 못 찾으면 None."""
+    if dirs is None:
+        base = os.environ.get("APPDATA")
+        dirs = [Path(base) / ".minecraft"] if base else []
+    for d in dirs:
+        try:
+            for line in (Path(d) / "options.txt").read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.startswith("pauseOnLostFocus:"):
+                    return line.split(":", 1)[1].strip().lower() == "true"
+        except OSError:
+            continue
+    return None
 
 
 def read_tooltip_durability(img):

@@ -40,4 +40,6 @@ Python 3.10+ 설치 후 `minecraft_fishing/run.bat` 더블클릭.
 
 ## 라이선스
 
-폰트: [Galmuri](https://github.com/quiple/galmuri) (SIL OFL 1.1, `minecraft_fishing/fonts/LICENSE.txt`)
+폰트: [Galmuri](https://github.com/quiple/galmuri) (SIL OFL 1.1, `minecraft_fishing/fonts/LICENSE.txt`) · 새 화면: [Jua](https://fonts.google.com/specimen/Jua), [Gowun Dodum](https://fonts.google.com/specimen/Gowun+Dodum) (SIL OFL 1.1, `minecraft_fishing/webui/fonts/`)
+
+화면: 새 화면은 `webapp.py` + `webui/` (pywebview, Edge WebView2). 예전 화면(`app.py`, tk)은 `MacroStart.pyw --old-ui` 로 열 수 있고, WebView2 를 못 열면 자동으로 예전 화면이 열림.

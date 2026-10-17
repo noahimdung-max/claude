@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>마크 낚시 매크로</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2AA3D4"/><stop offset="1" stop-color="#0B5C80"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8FD1F2"/><stop offset=".75" stop-color="#D8F0FA"/><stop offset="1" stop-color="#F3E9D2"/></linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3FB0DA"/><stop offset="1" stop-color="#0D5E86"/></linearGradient>
+    <linearGradient id="sea2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1F8DBE" stop-opacity=".9"/><stop offset="1" stop-color="#094A6A"/></linearGradient>
+    <radialGradient id="sunGlow"><stop offset="0" stop-color="#FFF4C7"/><stop offset="1" stop-color="#FFF4C7" stop-opacity="0"/></radialGradient>
+    <linearGradient id="plank" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C99460"/><stop offset="1" stop-color="#A9743F"/></linearGradient>
+    <symbol id="flag" viewBox="0 0 36 24">
+      <rect width="36" height="24" fill="#FFFFFF"/>
+      <g transform="rotate(33.69 18 12)">
+        <circle cx="18" cy="12" r="6" fill="#0047A0"/>
+        <path d="M12 12 A6 6 0 0 1 24 12 A3 3 0 0 0 18 12 A3 3 0 0 1 12 12 Z" fill="#CD2E3A"/>
+      </g>
+      <g fill="#000000">
+        <g transform="translate(9.68 6.45) rotate(-56.31)"><rect x="-3" y="-2" width="6" height="1"/><rect x="-3" y="-0.5" width="6" height="1"/><rect x="-3" y="1" width="6" height="1"/></g>
+        <g transform="translate(26.32 17.55) rotate(-56.31)"><rect x="-3" y="-2" width="2.75" height="1"/><rect x="0.25" y="-2" width="2.75" height="1"/><rect x="-3" y="-0.5" width="2.75" height="1"/><rect x="0.25" y="-0.5" width="2.75" height="1"/><rect x="-3" y="1" width="2.75" height="1"/><rect x="0.25" y="1" width="2.75" height="1"/></g>
+        <g transform="translate(26.32 6.45) rotate(56.31)"><rect x="-3" y="-2" width="2.75" height="1"/><rect x="0.25" y="-2" width="2.75" height="1"/><rect x="-3" y="-0.5" width="6" height="1"/><rect x="-3" y="1" width="2.75" height="1"/><rect x="0.25" y="1" width="2.75" height="1"/></g>
+        <g transform="translate(9.68 17.55) rotate(56.31)"><rect x="-3" y="-2" width="6" height="1"/><rect x="-3" y="-0.5" width="2.75" height="1"/><rect x="0.25" y="-0.5" width="2.75" height="1"/><rect x="-3" y="1" width="6" height="1"/></g>
+      </g>
+    </symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></g></symbol>
+    <symbol id="i-mini" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><rect x="12" y="12" width="7" height="6" rx="1.5"/></g></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></g></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></g></symbol>
+    <symbol id="i-rod" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L18 4"/><path d="M18 4v9a3 3 0 0 1-6 0"/></g></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></g></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/></g></symbol>
+    <symbol id="i-fish" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12c3-5 9-6 13-2l5-3v10l-5-3c-4 4-10 3-13-2z"/><circle cx="8" cy="11" r=".6" fill="currentColor"/></g></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></g></symbol>
+    <symbol id="i-cast" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L17 5"/><path d="M17 5q4 6 2 12"/><circle cx="19" cy="18" r="1.5"/></g></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></g></symbol>
+    <symbol id="i-bobber" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="6"/><path d="M6 13h12"/><path d="M12 7V3"/></g></symbol>
+    <symbol id="i-pack" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v10l-8 4-8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></g></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></g></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></g></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/></g></symbol>
+    <symbol id="i-chest" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 12h18M12 11v3"/><path d="M5 7V5h14v2"/></g></symbol>
+    <symbol id="i-anvil" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h13a5 5 0 0 1-5 5H8z"/><path d="M9 12v4M15 12v4M6 20h12M8 16h8"/></g></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></g></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 7 4.5z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+        <rect width="40" height="40" rx="12" fill="url(#lg)"/>
+        <path d="M22 9v14a5 5 0 0 1-10 0" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M12 23l-2.5-2.5" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="22" cy="8" r="2.4" fill="#FFD15C"/>
+        <path d="M6 33q4-3 8 0t8 0 8 0 8 0" fill="none" stroke="#BFE7F7" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h1>마크 낚시 매크로</h1>
+        <p><span id="ver">v-</span> · 물고기 따라가기 자동</p>
+      </div>
+    </div>
+    <div class="tools">
+      <button class="btn" type="button" id="topBtn" aria-pressed="true" title="다른 창보다 항상 위에 둠">
+        <svg width="16" height="16" aria-hidden="true"><use href="#i-pin"/></svg><span>항상 위</span></button>
+      <button class="btn" type="button" id="miniBtn" title="게임 옆에 띄우는 작은 창">
+        <svg width="16" height="16" aria-hidden="true"><use href="#i-mini"/></svg><span>미니 모드</span></button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="화면">
+    <button class="tab" type="button" data-go="home" aria-current="page"><svg width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg>홈</button>
+    <button class="tab" type="button" data-go="log"><svg width="16" height="16" aria-hidden="true"><use href="#i-chart"/></svg>기록</button>
+    <button class="tab" type="button" data-go="rod"><svg width="16" height="16" aria-hidden="true"><use href="#i-rod"/></svg>낚싯대</button>
+    <button class="tab" type="button" data-go="settings"><svg width="16" height="16" aria-hidden="true"><use href="#i-gear"/></svg>설정</button>
+    <button class="tab" type="button" data-go="guide"><svg width="16" height="16" aria-hidden="true"><use href="#i-book"/></svg>가이드</button>
+  </nav>
+
+  <div class="f7bar" id="f7bar" role="status" hidden>
+    <div><b id="f7text"></b><div class="desc" style="color:#7A3E06">마크로 넘어가서 그 장면에서 F7 을 누르면 이 창으로 돌아와요</div></div>
+    <button class="btn" type="button" id="f7cancel">취소</button>
+  </div>
+
+  <!-- ================= 홈 ================= -->
+  <main data-page="home" style="display:flex;flex-direction:column;gap:14px">
+    <section class="banner" aria-label="낚시 풍경">
+      <svg class="scene st-idle" id="scene" viewBox="0 0 520 210" role="img" aria-label="낚시꾼 캐릭터: 쉬는 중">
+        <rect width="520" height="210" fill="url(#sky)"/>
+        <circle cx="438" cy="50" r="46" fill="url(#sunGlow)"/>
+        <circle cx="438" cy="50" r="20" fill="#FFD66B"/>
+        <g class="cloud" fill="#FFFFFF" opacity=".92">
+          <path d="M40 46a12 12 0 0 1 22-6 10 10 0 0 1 17 8H40z"/>
+          <path d="M300 30a10 10 0 0 1 18-5 8 8 0 0 1 14 7h-32z"/>
+        </g>
+        <path d="M0 116 Q60 108 120 114 T260 112 T400 114 T520 110 V120 H0Z" fill="#7BB7C9" opacity=".55"/>
+        <g class="wave-a"><path d="M0 124 Q32.5 117 65 124 T130 124 T195 124 T260 124 T325 124 T390 124 T455 124 T520 124 T585 124 T650 124 T715 124 T780 124 T845 124 T910 124 T975 124 T1040 124 V210 H0Z" fill="url(#sea)"/></g>
+        <g class="glint" fill="#FFFFFF">
+          <rect x="360" y="140" width="26" height="2" rx="1"/><rect x="420" y="156" width="18" height="2" rx="1"/><rect x="230" y="168" width="22" height="2" rx="1"/>
+        </g>
+        <g>
+          <rect x="22" y="128" width="9" height="82" rx="2" fill="#6E4527"/>
+          <rect x="88" y="128" width="9" height="82" rx="2" fill="#6E4527"/>
+          <rect x="156" y="128" width="9" height="82" rx="2" fill="#6E4527"/>
+          <rect x="0" y="118" width="178" height="9" rx="3" fill="url(#plank)"/>
+          <rect x="0" y="126" width="178" height="5" rx="2" fill="#8A5A33"/>
+          <path d="M30 118v8M62 118v8M96 118v8M130 118v8" stroke="#9A6A3D" stroke-width="1"/>
+          <ellipse cx="90" cy="134" rx="92" ry="3" fill="#0B4F6C" opacity=".25"/>
+        </g>
+        <g class="angler">
+          <g class="torso">
+            <path d="M146 118 Q160 118 168 124 L176 148" fill="none" stroke="#2F4E73" stroke-width="9" stroke-linecap="round"/>
+            <path d="M140 119 Q154 120 161 126 L167 149" fill="none" stroke="#264363" stroke-width="9" stroke-linecap="round"/>
+            <ellipse cx="178" cy="151" rx="7" ry="4" fill="#4A3324"/>
+            <ellipse cx="169" cy="152" rx="7" ry="4" fill="#3D2A1D"/>
+            <path d="M131 118 Q129 92 146 88 Q163 90 161 118 Z" fill="#F28C38"/>
+            <path d="M136 100 Q146 104 157 100" fill="none" stroke="#FFD15C" stroke-width="3" stroke-linecap="round"/>
+            <path d="M141 89 Q146 96 152 89" fill="#E3742A"/>
+            <circle cx="148" cy="76" r="13" fill="#F7CFA8"/>
+            <ellipse cx="155" cy="81" rx="3" ry="2" fill="#F2A08A" opacity=".7"/>
+            <circle cx="153.5" cy="75" r="1.7" fill="#1E2A33"/>
+            <path d="M150 82 Q154 85 158 81" fill="none" stroke="#7A3B2A" stroke-width="1.4" stroke-linecap="round"/>
+            <ellipse cx="148" cy="67" rx="19" ry="4.5" fill="#E8A93A"/>
+            <path d="M136 67 Q136 52 148 52 Q160 52 160 67 Z" fill="#FFCF5C"/>
+            <rect x="136" y="62" width="24" height="3.5" fill="#D9932A"/>
+            <text class="zzz" x="166" y="58" font-size="12" fill="#1D4E6B" font-family="Jua">z</text>
+          </g>
+          <g class="rod-arm">
+            <path d="M149 96 Q160 106 170 101" fill="none" stroke="#E3742A" stroke-width="8" stroke-linecap="round"/>
+            <line x1="160" y1="110" x2="262" y2="36" stroke="#6B4423" stroke-width="3" stroke-linecap="round"/>
+            <line x1="160" y1="110" x2="170" y2="103" stroke="#2C3A44" stroke-width="5" stroke-linecap="round"/>
+            <circle cx="166" cy="106" r="3.2" fill="#9AA5AE"/>
+            <circle cx="171" cy="101" r="4.2" fill="#F7CFA8"/>
+            <line class="line" x1="262" y1="36" x2="316" y2="122" stroke="#FFFFFF" stroke-width="1.3" opacity=".95"/>
+            <g class="bobber">
+              <g class="bob">
+                <line x1="316" y1="122" x2="316" y2="117" stroke="#3A3A3A" stroke-width="1.4"/>
+                <path d="M310 128 A6 6 0 0 1 322 128 Z" fill="#E5483A"/>
+                <path d="M310 128 A6 6 0 0 0 322 128 Z" fill="#FFFFFF"/>
+              </g>
+              <ellipse class="ripple" cx="316" cy="131" rx="11" ry="2.6" fill="none" stroke="#FFFFFF" stroke-width="1.2"/>
+              <g class="splash" fill="#E6F7FF">
+                <circle cx="309" cy="122" r="1.8"/><circle cx="323" cy="120" r="2.2"/><circle cx="316" cy="116" r="1.5"/>
+                <path d="M304 128 Q316 118 328 128" fill="none" stroke="#E6F7FF" stroke-width="1.6"/>
+              </g>
+            </g>
+            <g class="catch">
+              <line x1="262" y1="36" x2="262" y2="52" stroke="#FFFFFF" stroke-width="1.3"/>
+              <path class="catch-body" d="M262 52 Q272 62 262 78 Q252 62 262 52 Z" fill="#3D9AD1"/>
+              <path class="catch-tail" d="M262 76 L255 86 L269 86 Z" fill="#2B7DB0"/>
+              <circle cx="264.5" cy="59" r="1.4" fill="#0F2B3D"/>
+              <path d="M257 66 Q262 69 267 66" fill="none" stroke="#BFE7F7" stroke-width="1"/>
+            </g>
+          </g>
+          <g class="exclaim">
+            <circle cx="172" cy="46" r="11" fill="#FFFFFF" stroke="#E5483A" stroke-width="2"/>
+            <path d="M165 55 L161 61 L170 56" fill="#FFFFFF"/>
+            <rect x="170.6" y="38.5" width="2.8" height="9" rx="1.4" fill="#C62F22"/>
+            <circle cx="172" cy="51.3" r="1.7" fill="#C62F22"/>
+          </g>
+        </g>
+        <path class="sparkle" d="M236 30 l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#FFE07A"/>
+        <path class="sparkle s2" d="M196 22 l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z" fill="#FFFFFF"/>
+        <path class="sparkle s3" d="M226 66 l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z" fill="#FFE07A"/>
+        <g class="wave-b"><path d="M0 150 Q32.5 144 65 150 T130 150 T195 150 T260 150 T325 150 T390 150 T455 150 T520 150 T585 150 T650 150 T715 150 T780 150 T845 150 T910 150 T975 150 T1040 150 V210 H0Z" fill="url(#sea2)" opacity=".85"/></g>
+      </svg>
+      <div class="tl"><span class="chip" role="status"><span class="live idle" id="liveDot"></span><span class="jua" style="font-size:15px" id="stateLabel">쉬는 중</span></span></div>
+      <div class="tr"><span class="chip"><span style="font-size:13px;color:var(--muted)">이번 낚시</span><span class="jua" style="font-size:18px" id="bannerCount">0마리</span></span></div>
+    </section>
+
+    <section aria-label="시작과 정지" style="display:flex;flex-direction:column;gap:10px">
+      <button type="button" class="run" id="runBtn"><svg width="22" height="22" aria-hidden="true"><use href="#i-play" id="runIcon"/></svg><span id="runLabel">낚시 시작</span><span class="kbd">F8</span></button>
+      <p class="hint">시작하면 마크 창으로 자동 전환돼요 · 마크 창을 벗어나면 잠깐 멈춤 · 완전 종료 F12</p>
+      <p class="hint" id="macroState" aria-live="polite">정지됨</p>
+      <ol class="steps" aria-label="진행 단계" id="steps">
+        <li class="step" data-k="cast"><span class="pip"></span>던지기</li>
+        <li class="step" data-k="wait"><span class="pip"></span>기다리기</li>
+        <li class="step" data-k="bite"><span class="pip"></span>입질</li>
+        <li class="step" data-k="reel"><span class="pip"></span>끌어올리기</li>
+        <li class="step" data-k="caught"><span class="pip"></span>낚음</li>
+      </ol>
+    </section>
+
+    <section class="stats" aria-label="통계">
+      <div class="card stat"><div class="stat-ic" style="background:#E3F2FA;color:#0B5C80"><svg width="20" height="20" aria-hidden="true"><use href="#i-fish"/></svg></div>
+        <div><div class="k">잡은 물고기</div><div class="v" id="sCaught">0마리</div><div class="s" id="sPerHour">시간당 0마리</div></div></div>
+      <div class="card stat"><div class="stat-ic" style="background:#FFF1E2;color:#A84E0E"><svg width="20" height="20" aria-hidden="true"><use href="#i-clock"/></svg></div>
+        <div><div class="k">경과 시간</div><div class="v" id="sElapsed">0:00:00</div><div class="s" id="sGoal">목표 없음</div></div></div>
+      <div class="card stat"><div class="stat-ic" style="background:#EAF1FF;color:#2F55B5"><svg width="20" height="20" aria-hidden="true"><use href="#i-cast"/></svg></div>
+        <div><div class="k">던진 횟수</div><div class="v" id="sCasts">0번</div><div class="s" id="sTotal">지금까지 총 0마리</div></div></div>
+      <div class="card stat"><div class="stat-ic" style="background:#E3F4EA;color:#1B6B3A"><svg width="20" height="20" aria-hidden="true"><use href="#i-target"/></svg></div>
+        <div><div class="k">성공률</div><div class="v" id="sRate">0%</div><div class="s">켠 뒤로 낚음 ÷ 던짐</div></div></div>
+    </section>
+
+    <section class="card" aria-label="실시간 상태">
+      <div class="live-grid">
+        <div><div class="k desc">입질 감지</div><div class="jua" style="font-size:18px;margin-top:2px" id="biteText">-</div></div>
+        <div>
+          <div class="row" style="font-size:13px;color:var(--muted)"><span>낚싯대 내구도</span><span id="duraText">-</span></div>
+          <div class="meter" id="duraMeter" role="meter" aria-label="낚싯대 내구도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="margin-top:8px"><div style="width:0%"></div></div>
+        </div>
+      </div>
+      <div class="bobber-live" id="bobberLive" hidden>
+        <img id="bobberImg" alt="찌 확대 화면" hidden>
+        <canvas id="traceCv" width="300" height="90" aria-label="가라앉음·물보라 그래프 (점선 넘으면 입질)" role="img"></canvas>
+      </div>
+      <div>
+        <div class="desc" style="margin-bottom:6px">미니게임 바</div>
+        <canvas class="barviz" id="barCv" width="600" height="34" role="img" aria-label="미니게임 바와 물고기 위치"></canvas>
+      </div>
+      <div>
+        <div class="row desc" style="margin-bottom:6px"><span>이번에 낚은 물고기</span><span>최근 1시간 (5분 단위)</span></div>
+        <div class="row" style="align-items:flex-end">
+          <div class="fish-chips" id="fishChips" style="flex:1"></div>
+          <div class="spark" id="spark" style="width:45%" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="logTitle">
+      <div class="row"><h2 id="logTitle" style="font-size:17px">활동 기록</h2><span class="desc">최근 5개</span></div>
+      <ul class="loglist" id="logList" aria-live="polite"></ul>
+    </section>
+  </main>
+
+  <!-- ================= 기록 ================= -->
+  <main data-page="log" hidden style="display:flex;flex-direction:column;gap:14px">
+    <section class="card" aria-labelledby="h-days">
+      <h2 id="h-days"><span class="ic" style="background:#E3F2FA;color:#0B5C80"><svg width="18" height="18" aria-hidden="true"><use href="#i-chart"/></svg></span>날짜별 기록</h2>
+      <div class="tiles" id="tiles"></div>
+    </section>
+    <section class="card" aria-labelledby="h-14">
+      <h2 id="h-14"><span class="ic" style="background:#E3F2FA;color:#0B5C80"><svg width="18" height="18" aria-hidden="true"><use href="#i-fish"/></svg></span>최근 14일 낚은 수</h2>
+      <p class="desc" id="dayInfo" aria-live="polite">-</p>
+      <div class="days" id="days"></div>
+      <div class="days-x" id="daysX"></div>
+    </section>
+    <section class="card" aria-labelledby="h-col">
+      <h2 id="h-col"><span class="ic" style="background:#FCE8F6;color:#9C2B7F"><svg width="18" height="18" aria-hidden="true"><use href="#i-fish"/></svg></span>물고기 색 (전체 기간)</h2>
+      <div id="colorBars" style="display:flex;flex-direction:column;gap:8px"></div>
+    </section>
+    <section class="card" aria-labelledby="h-an">
+      <h2 id="h-an"><span class="ic" style="background:#FFF1E2;color:#A84E0E"><svg width="18" height="18" aria-hidden="true"><use href="#i-sliders"/></svg></span>낚시 분석 (헛챔질·시간)</h2>
+      <p class="desc">지금까지 돌린 기록으로 헛챔질이 얼마나 있었는지, 시간이 어디에 쓰였는지, 고칠 점을 보여줘요. 문제가 있을 때 '복사'해서 보내주면 원인 찾기 쉬워요.</p>
+      <div class="inline"><button class="btn primary" type="button" id="anBtn">분석하기</button><button class="btn" type="button" id="anCopy">복사</button></div>
+      <pre class="analysis" id="anText">'분석하기'를 누르면 여기에 나와요.</pre>
+    </section>
+  </main>
+
+  <!-- ================= 낚싯대 ================= -->
+  <main data-page="rod" hidden style="display:flex;flex-direction:column;gap:14px">
+    <section class="card" aria-labelledby="h-swap">
+      <h2 id="h-swap"><span class="ic" style="background:#E3F2FA;color:#0B5C80"><svg width="18" height="18" aria-hidden="true"><use href="#i-rod"/></svg></span>낚싯대 자동 교체</h2>
+      <label class="sw"><span class="lab">켜기</span><input type="checkbox" data-cfg="rod_swap"></label>
+      <p class="desc">내구도가 멈춤 기준(설정의 %) 아래로 내려가면 아래에서 고른 칸 중 다음 칸으로 바꿔서 계속 낚아요. 고른 칸을 다 쓰면 멈춤. 칸을 눌러서 고르기.</p>
+      <div class="slots" id="swapSlots" role="group" aria-label="교체에 쓸 핫바 칸"></div>
+      <p class="desc" id="swapText">-</p>
+    </section>
+    <section class="card" aria-labelledby="h-exact">
+      <h2 id="h-exact"><span class="ic" style="background:#EAF1FF;color:#2F55B5"><svg width="18" height="18" aria-hidden="true"><use href="#i-target"/></svg></span>정밀 내구도 <span class="desc">실험</span></h2>
+      <label class="sw"><span class="lab">켜기</span><input type="checkbox" data-cfg="exact_durability"></label>
+      <p class="desc">인벤을 잠깐 열어 낚싯대에 마우스를 올리고, 툴팁의 '내구도: 57 / 64' 숫자를 그대로 읽어요. 마크에서 F3+H(고급 툴팁)를 한 번 눌러둬야 해요. 최대 내구도도 자동으로 맞춰짐.</p>
+      <div class="row">
+        <label class="inline"><span class="lab">인벤 확인:</span><input class="num" type="number" min="1" max="200" data-cfg="inv_check_every"><span class="lab">마리마다</span></label>
+        <button class="btn primary" type="button" id="checkNow">다음에 바로 확인</button>
+      </div>
+      <p class="desc">읽을 낚싯대 칸 (자동 = 지금 들고 있는 칸)</p>
+      <div class="slots ten" id="exactSlots" role="group" aria-label="읽을 낚싯대 칸"></div>
+    </section>
+    <section class="card" aria-labelledby="h-rep">
+      <h2 id="h-rep"><span class="ic" style="background:#FFF1E2;color:#A84E0E"><svg width="18" height="18" aria-hidden="true"><use href="#i-anvil"/></svg></span>모루 자동 수리 <span class="desc">실험</span></h2>
+      <label class="sw"><span class="lab">켜기 (내구도가 멈춤 기준 아래면 수리)</span><input type="checkbox" data-cfg="repair_on"></label>
+      <p class="desc">모루 쪽으로 시점을 돌려 수리 창을 열고, 낚싯대·실을 Shift+클릭 → ✓ → 수리된 낚싯대를 원래 칸으로 → 다시 물 쪽으로. 골드·실이 모자라면 멈추고 알림. 일반 모드에서만 돼요.</p>
+      <div><p class="desc" style="margin-bottom:6px">낚싯대 칸</p><div class="slots" id="repRodSlots" role="group" aria-label="수리할 낚싯대 칸"></div></div>
+      <div><p class="desc" style="margin-bottom:6px">실 칸</p><div class="slots" id="repStrSlots" role="group" aria-label="실 칸"></div></div>
+      <div class="row">
+        <label class="inline"><span class="lab">수리비</span><input class="num" type="number" min="0" step="50" data-cfg="repair_cost"><span class="lab">골드</span></label>
+        <button class="btn" type="button" data-set="gold">골드 숫자 영역 (F7)</button>
+      </div>
+      <p class="lab" style="margin:4px 0 0">모루 방향: 기록하기 (추천) 또는 각도 입력</p>
+      <div class="inline"><button class="btn primary" type="button" id="turnRec">방향 기록하기 (F7 두 번)</button><button class="btn" type="button" id="turnTest">모루 보기 테스트</button></div>
+      <div class="guidebox" id="repairGuide" role="status" hidden></div>
+      <div class="inline">
+        <label class="inline"><span class="lab">감도 %</span><input class="num" style="width:70px" id="sens"></label>
+        <label class="inline"><span class="lab">좌우°</span><input class="num" style="width:70px" id="yaw"></label>
+        <label class="inline"><span class="lab">위아래°</span><input class="num" style="width:70px" id="pitch"></label>
+        <button class="btn" type="button" id="useAngle">각도로 쓰기</button>
+      </div>
+      <p class="desc">각도: 오른쪽·아래가 + (뒤돌기 = 180). 감도는 마크 설정 &gt; 마우스 감도 숫자. DPI 는 상관없음.</p>
+      <div><button class="btn" type="button" data-set="repair">수리 창 위치 지정 (F7)</button></div>
+      <p class="desc" id="repairText">-</p>
+    </section>
+    <section class="card" aria-labelledby="h-inv">
+      <h2 id="h-inv"><span class="ic" style="background:#E3F4EA;color:#1B6B3A"><svg width="18" height="18" aria-hidden="true"><use href="#i-chest"/></svg></span>인벤토리 가득 참</h2>
+      <label class="sw"><span class="lab">빈칸이 없으면 멈춤</span><input type="checkbox" data-cfg="inv_full_stop"></label>
+      <label class="inline"><span class="lab">빈칸</span><input class="num" type="number" min="0" max="35" data-cfg="inv_min_empty"><span class="lab">개 이하</span></label>
+      <p class="desc">꽉 차면 낚은 물고기가 바닥에 떨어져서 손해. 위 '인벤 확인' 때 같이 셈.</p>
+      <div class="inv" id="inv" role="img" aria-label="인벤토리 칸 (어두운 칸 = 찬 칸)"></div>
+      <p class="desc" id="invText">아직 확인 안 함</p>
+    </section>
+  </main>
+
+  <!-- ================= 설정 ================= -->
+  <main data-page="settings" hidden style="display:flex;flex-direction:column;gap:14px">
+    <section class="card" aria-labelledby="h-bite">
+      <h2 id="h-bite"><span class="ic" style="background:#FFF1E2;color:#A84E0E"><svg width="18" height="18" aria-hidden="true"><use href="#i-bobber"/></svg></span>입질 감지 · 화면 위치</h2>
+      <fieldset><legend>무엇을 보고 입질을 알아챌까요?</legend>
+        <div class="pills" data-radio="bite_mode">
+          <label class="pill"><input type="radio" name="bite_mode" value="subtitle"><span>자막</span></label>
+          <label class="pill"><input type="radio" name="bite_mode" value="bobber"><span>찌 화면</span></label>
+          <label class="pill"><input type="radio" name="bite_mode" value="both"><span>둘 다 (추천)</span></label>
+        </div></fieldset>
+      <div>
+        <div class="status"><span class="lab">입질 자막</span><span class="badge" data-st="subtitle">-</span><button class="btn" type="button" data-set="subtitle">지정하기</button></div>
+        <div class="status"><span class="lab">찌 (예비)</span><span class="badge" data-st="bobber">-</span><button class="btn" type="button" data-set="bobber">지정하기</button></div>
+        <div class="status"><span class="lab">낚싯대 내구도</span><span class="badge" data-st="rod">-</span><button class="btn" type="button" data-set="rod">지정하기</button></div>
+        <div class="status"><span class="lab">미니게임 바</span><span class="badge" data-st="bar">-</span>
+          <span class="inline"><button class="btn" type="button" id="barAuto">자동</button><button class="btn" type="button" data-set="bar">직접</button></span></div>
+      </div>
+      <fieldset><legend>화면 가져오기</legend>
+        <div class="pills">
+          <label class="pill"><input type="radio" name="capture" value="live" checked><span>게임에서 F7</span></label>
+          <label class="pill"><input type="radio" name="capture" value="file"><span>스크린샷 파일</span></label>
+        </div></fieldset>
+    </section>
+
+    <section class="card" aria-labelledby="h-fish">
+      <h2 id="h-fish"><span class="ic" style="background:#E3F2FA;color:#0B5C80"><svg width="18" height="18" aria-hidden="true"><use href="#i-fish"/></svg></span>낚시</h2>
+      <div class="row"><span class="lab">목표 (0이면 끔)</span>
+        <span class="inline">
+          <label class="inline"><input class="num" type="number" min="0" step="10" data-cfg="goal_count"><span class="lab">마리</span></label>
+          <label class="inline"><input class="num" type="number" min="0" step="10" data-cfg="goal_minutes"><span class="lab">분</span></label>
+        </span></div>
+      <label class="sw"><span><span class="lab">다른 창 쓰면서 낚시</span><br><span class="desc">실험 기능 · 가이드 참고 (마크에서 F3+P, 최소화 금지)</span></span><input type="checkbox" data-cfg="background"></label>
+      <label class="sw"><span><span class="lab">내구도 안 봄</span><br><span class="desc">수선 낚싯대를 쓸 때</span></span><input type="checkbox" data-cfg="durability_ignore"></label>
+      <div class="row"><span class="lab">내구도가 이만큼 남으면 멈춤</span>
+        <span class="inline">
+          <label class="inline"><input class="num" type="number" min="1" max="99" step="5" data-cfg="durability_stop_pct"><span class="lab">%</span></label>
+          <label class="inline"><span class="lab">최대</span><input class="num" type="number" min="1" max="2000" data-cfg="durability_max"></label>
+        </span></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-pack">
+      <h2 id="h-pack"><span class="ic" style="background:#FCE8F6;color:#9C2B7F"><svg width="18" height="18" aria-hidden="true"><use href="#i-pack"/></svg></span>찌 리소스팩 <span class="desc">선택</span></h2>
+      <p class="desc">찌를 형광색으로 바꾸는 리소스팩을 만들어요. 찌를 색만으로 찾아서 어두운 곳·작은 창에서도 잘 잡혀요. 서버가 리소스팩을 허용하는지는 직접 확인해 주세요.</p>
+      <fieldset><legend>찌 색</legend>
+        <div class="pills" data-radio="bobber_style">
+          <label class="pill"><input type="radio" name="bobber_style" value="auto"><span>자동</span></label>
+          <label class="pill"><input type="radio" name="bobber_style" value="vanilla"><span>기본</span></label>
+          <label class="pill"><input type="radio" name="bobber_style" value="magenta"><span>분홍</span></label>
+          <label class="pill"><input type="radio" name="bobber_style" value="lime"><span>연두</span></label>
+        </div></fieldset>
+      <fieldset><legend>마크 버전</legend>
+        <div class="pills" data-radio="pack_version">
+          <label class="pill"><input type="radio" name="pack_version" value="26.1.2"><span>26.1.2</span></label>
+          <label class="pill"><input type="radio" name="pack_version" value="26.3"><span>26.3</span></label>
+          <label class="pill"><input type="radio" name="pack_version" value="both"><span>둘 다</span></label>
+          <label class="pill"><input type="radio" name="pack_version" value="all"><span>모든 버전</span></label>
+        </div></fieldset>
+      <p class="desc">버전마다 팩 형식 번호가 달라서, 쓰는 마크 버전에 맞는 팩을 골라 만들어요. '둘 다'면 26.1.2용·26.3용을 같이 만들어서 마크 리소스팩 목록에서 골라 켤 수 있어요. 모르겠으면 '모든 버전'.</p>
+      <button class="btn primary big" type="button" id="packBtn">리소스팩 만들기</button>
+      <p class="desc" id="packText" role="status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="h-adv">
+      <h2 id="h-adv"><span class="ic" style="background:#EAF1FF;color:#2F55B5"><svg width="18" height="18" aria-hidden="true"><use href="#i-sliders"/></svg></span>세부 설정</h2>
+      <div id="advFields"></div>
+      <fieldset><legend>웅크리기 키 (마크 조작 설정과 같게)</legend>
+        <div class="pills">
+          <label class="pill"><input type="radio" name="sneak_key" value="shift"><span>Shift</span></label>
+          <label class="pill"><input type="radio" name="sneak_key" value="ctrl"><span>Ctrl</span></label>
+        </div></fieldset>
+      <label class="sw"><span class="lab">미니게임 끝나고 우클릭 한 번 더</span><input type="checkbox" id="advReel"></label>
+      <label class="sw"><span><span class="lab">로그 남기기</span><br><span class="desc">exe 옆 macro.log · 다음 시작부터</span></span><input type="checkbox" id="advLog"></label>
+      <button class="btn primary big" type="button" id="advSave">세부 설정 저장</button>
+    </section>
+
+    <section class="card" aria-labelledby="h-hook">
+      <h2 id="h-hook"><span class="ic" style="background:#EEEAFD;color:#5235B0"><svg width="18" height="18" aria-hidden="true"><use href="#i-bell"/></svg></span>디스코드 알림</h2>
+      <p class="desc">멈출 때(목표 달성·내구도·연속 실패·오류) 디스코드로 알려줘요. 채널 설정 → 연동 → 웹후크에서 주소를 복사하세요.</p>
+      <label style="display:flex;flex-direction:column;gap:6px"><span class="lab">웹후크 주소</span><input class="txt" type="url" id="hookUrl" placeholder="https://discord.com/api/webhooks/..." autocomplete="off" spellcheck="false"></label>
+      <div class="row">
+        <label class="sw" style="flex:1"><span class="lab">낚을 때마다 알림</span><input type="checkbox" id="hookEach"></label>
+        <button class="btn" type="button" id="hookTest">저장 + 테스트</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-win">
+      <h2 id="h-win"><span class="ic" style="background:#E3F4EA;color:#1B6B3A"><svg width="18" height="18" aria-hidden="true"><use href="#i-window"/></svg></span>창</h2>
+      <label class="sw"><span class="lab">항상 위</span><input type="checkbox" id="winTop"></label>
+      <label class="sw"><span><span class="lab">창 크기·위치 기억</span><br><span class="desc">다음에 켤 때 같은 자리에 열려요</span></span><input type="checkbox" data-cfg="remember_window"></label>
+      <fieldset><legend>창 크기</legend>
+        <div class="pills">
+          <label class="pill"><input type="radio" name="win_preset" value="small"><span>작게</span></label>
+          <label class="pill"><input type="radio" name="win_preset" value="mid"><span>보통</span></label>
+          <label class="pill"><input type="radio" name="win_preset" value="large"><span>크게</span></label>
+        </div></fieldset>
+      <button class="btn danger" type="button" id="quitBtn">완전 종료 (F12)</button>
+    </section>
+  </main>
+
+  <!-- ================= 가이드 ================= -->
+  <main data-page="guide" hidden style="display:flex;flex-direction:column;gap:14px" id="guidePage"></main>
+
+  <footer class="foot">
+    <div class="inline">
+      <span class="desc">창 크기</span>
+      <div class="seg" role="group" aria-label="창 크기">
+        <button type="button" data-size="small" aria-pressed="false">작게</button>
+        <button type="button" data-size="mid" aria-pressed="true">보통</button>
+        <button type="button" data-size="large" aria-pressed="false">크게</button>
+      </div>
+    </div>
+    <svg class="flag" width="54" height="36" role="img" aria-label="태극기"><use href="#flag"/></svg>
+  </footer>
+</div>
+
+<!-- ================= 미니 모드 ================= -->
+<div class="mini-view" id="miniView">
+  <div class="mini-scene" id="miniScene"></div>
+  <div class="mini-side">
+    <div role="status"><div class="desc" id="miniState">쉬는 중</div><div class="n"><span id="miniCount">0</span><small>마리</small></div></div>
+    <button type="button" class="mbtn" id="miniRun">시작 <span class="kbd">F8</span></button>
+    <div class="row" style="margin-top:auto">
+      <button type="button" class="small" id="miniBack"><svg width="14" height="14" aria-hidden="true"><use href="#i-expand"/></svg>크게</button>
+      <svg class="flag" width="36" height="24" role="img" aria-label="태극기"><use href="#flag"/></svg>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 창들 ================= -->
+<div class="overlay" id="pickOv" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pickGuide">
+    <h2 id="pickGuide" style="white-space:pre-wrap;font-size:16px;line-height:1.5"></h2>
+    <div class="pickwrap" id="pickWrap"><img id="pickImg" alt="게임 화면" draggable="false"><div class="pickrect" id="pickRect" hidden></div><div class="pickpt" id="pickPt" hidden></div></div>
+    <div class="acts">
+      <button class="btn" type="button" id="pickRetry" hidden>다시 하기</button>
+      <button class="btn" type="button" id="pickCancel">취소 (Esc)</button>
+      <button class="btn primary" type="button" id="pickOk">확인 (Enter)</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="dlgOv" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="dlgTitle" aria-describedby="dlgText" style="width:min(460px,100%);margin-top:40px">
+    <h2 id="dlgTitle"></h2>
+    <p class="msg" id="dlgText"></p>
+    <div class="acts"><button class="btn" type="button" id="dlgNo" hidden></button><button class="btn primary" type="button" id="dlgOk">확인</button></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

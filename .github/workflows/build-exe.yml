@@ -49,7 +49,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow windows-capture pyinstaller
+        run: pip install mss numpy opencv-python-headless pydirectinput keyboard pillow windows-capture pywebview pyinstaller
 
       - name: Unit tests (fake screen / bite judgement / resource pack / tooltip / log analysis)
         timeout-minutes: 6
@@ -69,12 +69,18 @@ jobs:
           --name MinecraftFishingMacro-v${{ inputs.version || 'dev' }}
           --icon icon.ico
           --add-data "fonts;fonts"
+          --add-data "webui;webui"
+          --add-data "icon.ico;."
           --hidden-import app
+          --hidden-import webapp
           --hidden-import windows_capture
+          --collect-all webview
+          --collect-all pythonnet
+          --collect-all clr_loader
           MacroStart.pyw
 
       - name: Smoke test (import)
-        run: python -c "import app, fishing_macro, common; print('import ok')"
+        run: python -c "import app, webapp, fishing_macro, common; print('import ok')"
 
       - name: Smoke test (open window, every page)
         timeout-minutes: 2

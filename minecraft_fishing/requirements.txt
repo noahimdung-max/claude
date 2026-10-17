@@ -5,3 +5,4 @@ pydirectinput
 keyboard
 windows-capture; sys_platform == "win32"
 pillow
+pywebview; sys_platform == "win32"

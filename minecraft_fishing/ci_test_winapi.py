@@ -31,13 +31,14 @@ u.RegisterClassW(ctypes.byref(wc))
 u.CreateWindowExW.restype = wintypes.HWND
 u.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int,
                               ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
-game = u.CreateWindowExW(0, "GLFW30", "Lunar Client 1.21.4 - test", 0x00CF0000 | 0x10000000, 100, 100, 1296, 759,
+game = u.CreateWindowExW(0, "GLFW30", "Lunar Client 1.21.4 - test", 0x00CF0000, 100, 100, 1296, 759,
                          None, None, hinst, None)
+u.ShowWindow(wintypes.HWND(game), 4)            # SW_SHOWNOACTIVATE: 보이게만, 앞으로는 안 가져옴 (가려진 상태를 시험해야 함)
 root = tk.Tk(); root.title("Minecraft 위키 - Chrome (미끼)"); root.geometry("600x400+900+500")
 tk.Canvas(root, bg="#00ff00", highlightthickness=0).pack(fill="both", expand=True)
 cover = tk.Toplevel(root); cover.title("Other app"); cover.geometry("1400x850+50+50")
 tk.Canvas(cover, bg="#0000ff", highlightthickness=0).pack(fill="both", expand=True)
-root.after(400, lambda: (cover.lift(), cover.focus_force()))
+root.after(400, lambda: (cover.lift(), cover.focus_force(), u.SetForegroundWindow(wintypes.HWND(int(cover.wm_frame(), 16)))))
 root.after(60000, root.destroy)
 root.mainloop()
 '''

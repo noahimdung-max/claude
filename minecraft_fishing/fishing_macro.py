@@ -366,10 +366,13 @@ class Macro:
         c["bar_scale"] = cur
 
     def right_click(self):
-        self.logger.write("KEY", "우클릭")
-        if self.bg_mode:
+        # 백그라운드 모드라도 마크가 앞에 있으면 진짜 클릭 (Shift·좌클릭과 같게).
+        # 마크 26.x(SDL)는 앞에 있을 때 창 메시지로 보낸 클릭을 무시해서, 인벤 확인(키)은 되는데 낚싯대를 안 던졌음 (실제 v1.9.2 로그)
+        if self.bg_mode and not self._front():
+            self.logger.write("KEY", "우클릭 (마크 창에만)")
             winapi.post_right_click(self.hwnd)
             return
+        self.logger.write("KEY", "우클릭")
         pydirectinput.mouseDown(button="right")
         time.sleep(0.05)
         pydirectinput.mouseUp(button="right")

@@ -104,6 +104,32 @@ class PauseMenu(unittest.TestCase):
         self.assertIsNone(getattr(m, "game_ref", None))
 
 
+class RightClick(unittest.TestCase):
+    """실제 v1.9.2 로그: 백그라운드 모드인데 마크가 앞에 있으면 창 메시지 우클릭을 마크(SDL)가 무시해서 안 던짐."""
+    def setUp(self):
+        fakes.EVENTS.clear()
+        self.win = fakes.sys.modules["winapi"]
+
+    def tearDown(self):
+        self.win.is_foreground = lambda h: True
+
+    def test_front_uses_real_click(self):
+        m, _ = bg_macro()
+        self.win.is_foreground = lambda h: True
+        m.right_click()
+        names = [e[0] for e in fakes.EVENTS]
+        self.assertIn("mouseDown", names)
+        self.assertNotIn("win.post_right_click", names)
+
+    def test_behind_posts_to_window(self):
+        m, _ = bg_macro()
+        self.win.is_foreground = lambda h: False
+        m.right_click()
+        names = [e[0] for e in fakes.EVENTS]
+        self.assertIn("win.post_right_click", names)
+        self.assertNotIn("mouseDown", names)
+
+
 class FpsWatch(unittest.TestCase):
     """실제 로그: 캡처를 다시 연 뒤 '초당 -3번 / -957번만 그려져서' 헛알림."""
     def _macro(self, frames):

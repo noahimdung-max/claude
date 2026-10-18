@@ -42,4 +42,6 @@ Python 3.10+ 설치 후 `minecraft_fishing/run.bat` 더블클릭.
 
 폰트: [Galmuri](https://github.com/quiple/galmuri) (SIL OFL 1.1, `minecraft_fishing/fonts/LICENSE.txt`) · 새 화면: [Jua](https://fonts.google.com/specimen/Jua), [Gowun Dodum](https://fonts.google.com/specimen/Gowun+Dodum) (SIL OFL 1.1, `minecraft_fishing/webui/fonts/`)
 
+낚시 연결 모드: `fabric_bridge/` (Fabric, 마크 26.3, Java 25). 마크 26.x 백그라운드 모드에서 웅크리기·클릭·인벤을 게임 안에서 처리. 빌드 `cd fabric_bridge && gradlew build` -> `build/libs/fishbridge-mc26.3-*.jar`. 매크로 쪽은 `minecraft_fishing/bridge.py` (127.0.0.1:47321, 한 줄 명령 -> JSON).
+
 화면: 새 화면은 `webapp.py` + `webui/` (pywebview, Edge WebView2). 예전 화면(`app.py`, tk)은 `MacroStart.pyw --old-ui` 로 열 수 있고, WebView2 를 못 열면 자동으로 예전 화면이 열림.

@@ -1,0 +1,60 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base {
+	archivesName = "fishbridge-mc${project.minecraft_version}"
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	runs {
+		client {
+			// 개발용 시험: 시험용 명령(devcmd) 켜기 + 만들어 둔 시험 월드로 바로 들어가기
+			vmArg "-Dfishbridge.dev=true"
+			programArgs "--quickPlaySingleplayer", "New World"
+		}
+	}
+
+	mods {
+		"fishbridge" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	// Fabric API 는 안 씀 (사용자가 모드 하나만 넣으면 되게)
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+	it.options.encoding = "UTF-8"
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	def projectName = project.name
+	inputs.property "projectName", projectName
+
+	from("LICENSE") {
+		rename { "${it}_$projectName"}
+	}
+}

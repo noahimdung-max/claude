@@ -1,0 +1,28 @@
+{
+	"schemaVersion": 1,
+	"id": "fishbridge",
+	"version": "${version}",
+	"name": "Fish Bridge (마크 낚시 매크로 연결)",
+	"description": "마크 낚시 매크로가 백그라운드 모드에서 웅크리기·우클릭·좌클릭·인벤 정보를 게임 안에서 처리하게 해주는 연결 모드. 같은 PC(127.0.0.1)에서만 연결됨.",
+	"authors": ["noahimdung-max"],
+	"contact": {
+		"sources": "https://github.com/noahimdung-max/claude"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/fishbridge/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["fishbridge.FishBridge"]
+	},
+	"mixins": [
+		{
+			"config": "fishbridge.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25"
+	}
+}

@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "fishbridge.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"MinecraftTickMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

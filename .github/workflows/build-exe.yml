@@ -13,7 +13,7 @@ on:
         default: false
   push:
     branches: ["claude/bold-darwin-1zygnn"]
-    paths: [".github/workflows/build-exe.yml", "minecraft_fishing/ci_test_winapi.py", "minecraft_fishing/winapi.py", "minecraft_fishing/tests/**", "minecraft_fishing/analysis.py"]
+    paths: [".github/workflows/build-exe.yml", "minecraft_fishing/ci_test_winapi.py", "minecraft_fishing/winapi.py", "minecraft_fishing/tests/**", "minecraft_fishing/analysis.py", "fabric_bridge/**"]
 
 permissions:
   contents: write
@@ -86,13 +86,26 @@ jobs:
         timeout-minutes: 2
         run: python -c "import app; a = app.App(); [a.show_page(k) or a.root.update() for k in a.pages]; a.toggle_theme(); a.root.update(); a.close(); print('ui ok')"
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Build fishbridge mod (Fabric, 낚시 연결 모드)
+        working-directory: fabric_bridge
+        run: |
+          ./gradlew.bat --no-daemon build
+          Copy-Item build/libs/fishbridge-mc*.jar ../minecraft_fishing/dist/ -Exclude *-sources.jar
+
       - name: Make bobber resource packs (also a test of the pack writer)
         run: python -c "import zipfile; from common import write_bobber_pack, BOBBER_PACK_VERSIONS; [print(p.name, zipfile.ZipFile(p).namelist()) for p in (write_bobber_pack('dist', s, v) for s in ('magenta', 'lime') for v in BOBBER_PACK_VERSIONS)]"
 
       - uses: actions/upload-artifact@v4
         with:
           name: MinecraftFishingMacro
-          path: minecraft_fishing/dist/*.exe
+          path: |
+            minecraft_fishing/dist/*.exe
+            minecraft_fishing/dist/*.jar
 
       - name: Release notes
         if: github.event_name == 'workflow_dispatch'
@@ -110,4 +123,5 @@ jobs:
           files: |
             minecraft_fishing/dist/*.exe
             minecraft_fishing/dist/*.zip
+            minecraft_fishing/dist/*.jar
           body_path: notes.md

@@ -19,6 +19,7 @@ import numpy as np
 import pydirectinput
 
 import winapi
+import bridge
 
 from common import (Screen, fish_color_name, durability_roi_in_slot, selected_slot, bobber_mask, bobber_style, bobber_candidates, BOBBER_STYLES, bracket_runs, durability_value, find_bobber, fish_blob_x,
                     gauge_present, load_config, load_subtitle_template, locate_bar, match_bin, save_config, scale_template, text_binary, to_gray,
@@ -141,6 +142,7 @@ class Macro:
         self.io_ready = False            # 시작할 때마다 창 찾기/모드 설정
         self.fails = 0                   # 연속으로 못 낚은 횟수
         self.shift_method = "real"
+        self.bridge = None               # 낚시 연결 모드(Fabric fishbridge). 백그라운드 모드에서 키·클릭을 게임 안에서 처리
         self.capture_name = "화면"
         self.run_caught = 0              # 이번 시작 후 낚은 수 (목표용)
         self.bite_img = None             # 입질 판정 순간 화면 (헛챔질 분석용)
@@ -249,6 +251,39 @@ class Macro:
         if hasattr(self.screen, "stop"):
             self.screen.stop()
 
+    # ---------- 낚시 연결 모드 (Fabric fishbridge) ----------
+    def connect_bridge(self):
+        """백그라운드 모드: 연결 모드가 켜져 있으면 Shift·클릭·인벤을 게임 안에서 처리 (마크가 뒤에 있어도 됨).
+        마크 26.x(SDL)는 뒤에 있으면 매크로가 보낸 키를 무시해서, 모드 없이는 미니게임 Shift 가 안 먹음 (실제 v1.9.3 로그)."""
+        if self.bridge and self.bridge.alive:
+            return
+        self.bridge = bridge.try_connect()
+        if self.bridge:
+            v = self.bridge.info
+            self.out(f"[모드] 낚시 연결 모드 사용 (fishbridge {v.get('ver')}, 마크 {v.get('mc')}): "
+                     "Shift·클릭·인벤을 게임 안에서 처리해서 마크가 뒤에 있어도 돼")
+        elif "SDL" in str(winapi.window_desc(self.hwnd)):
+            self.out("[주의] 마크 26.x 는 뒤에 있으면 매크로가 보내는 키(Shift·E)를 무시해서 미니게임을 못 해. "
+                     "낚시 연결 모드(fishbridge)를 설치하거나(가이드 탭) 마크를 앞에 두고 써줘")
+
+    def drop_bridge(self):
+        if self.bridge:
+            self.bridge.close()
+            self.bridge = None
+
+    def use_bridge(self):
+        return self.bg_mode and self.bridge is not None and self.bridge.alive
+
+    def bridge_call(self, fn, *a):
+        """모드로 보내기. 끊기면 False (예전 방식으로 돌아감)."""
+        try:
+            fn(*a)
+            return True
+        except bridge.BridgeError as e:
+            self.out(f"[모드] 연결이 끊겼어 ({e}) -> 예전 방식으로")
+            self.bridge = None
+            return False
+
     def setup_io(self, reopen=False):
         """시작할 때: 마크 창 찾기 + (백그라운드 모드면) 창 캡처 확인 / (일반이면) 창을 앞으로.
         reopen=True: 낚시 도중에 캡처만 다시 여는 것 (어두운 장면 때문에 '검은 화면'으로 오해해 정지하지 않음)."""
@@ -280,10 +315,12 @@ class Macro:
             if not reopen:
                 self.out(f"백그라운드 모드({how}): 다른 창 써도 돼 (마크 F3+P 로 '창 뒤로 가도 일시정지 안 함' 이어야 함)"
                          + ("" if throttle else " / 마크 절전 제한 끄기 실패: 가이드 참고"))
-                if pause_on_blur_setting():
+                self.connect_bridge()
+                if pause_on_blur_setting() and not self.use_bridge():      # 모드가 있으면 모드가 자동 일시정지를 막음
                     self.out("[주의] 마크 옵션에 '창이 뒤로 가면 일시정지'가 켜져 있어. 마크에서 F3+P 를 눌러 꺼줘 "
                              "(켜져 있으면 다른 창을 쓰는 순간 일시정지 메뉴가 떠서 낚시대를 못 던져)")
         else:
+            self.drop_bridge()
             self.close_screen()
             self.screen = Screen(c["monitor"])
             if self.hwnd and not winapi.is_foreground(self.hwnd):
@@ -321,6 +358,16 @@ class Macro:
         떠 있는 채로 우클릭하면 아무 일도 안 일어나 입질 기다리느라 시간만 감."""
         if not self.bg_mode:
             return
+        if self.use_bridge():                         # 연결 모드: 열린 화면을 게임에서 바로 물어보고 닫음
+            try:
+                st = self.bridge.state()
+                if st.get("screen"):
+                    self.out(f"[복구] 던지기 전에 마크에 창({st['screen']})이 떠 있어서 닫았어")
+                    self.bridge.press("esc")
+                    self.sleep(0.3)
+                return
+            except bridge.BridgeError:
+                self.bridge = None
         try:
             now = self.view()
         except Exception:
@@ -366,6 +413,9 @@ class Macro:
         c["bar_scale"] = cur
 
     def right_click(self):
+        if self.use_bridge() and self.bridge_call(self.bridge.use):
+            self.logger.write("KEY", "우클릭 (모드)")
+            return
         # 백그라운드 모드라도 마크가 앞에 있으면 진짜 클릭 (Shift·좌클릭과 같게).
         # 마크 26.x(SDL)는 앞에 있을 때 창 메시지로 보낸 클릭을 무시해서, 인벤 확인(키)은 되는데 낚싯대를 안 던졌음 (실제 v1.9.2 로그)
         if self.bg_mode and not self._front():
@@ -380,6 +430,8 @@ class Macro:
     def _shift_method(self):
         """백그라운드 모드라도 마크 창이 앞에 있으면 진짜 키 입력을 써야 함.
         (마크(GLFW)는 창이 앞에 있을 때 실제 키보드에 Shift 가 안 눌려 있으면 바로 떼버림)"""
+        if self.use_bridge():
+            return "bridge"
         if self.bg_mode and not winapi.is_foreground(self.hwnd):
             return "post"
         return "real"
@@ -391,7 +443,9 @@ class Macro:
         while not stop_ev.is_set():
             front = not self.hwnd or winapi.is_foreground(self.hwnd)
             try:
-                if front:
+                if self.use_bridge():
+                    self.bridge_call(self.bridge.attack)
+                elif front:
                     pydirectinput.mouseDown(button="left")
                     time.sleep(0.015)
                     pydirectinput.mouseUp(button="left")
@@ -408,10 +462,18 @@ class Macro:
         if down:
             self.sneak_key = "ctrl" if self.cfg.get("sneak_key") == "ctrl" else "shift"
         key = getattr(self, "sneak_key", "shift")
+        if method == "bridge":
+            # 모드 연결이 끊겼으면 모드가 1.5초 안에 알아서 뗌. 누르는 중이었으면 예전 방식으로 이어서 누름
+            if self.bridge and self.bridge_call(self.bridge.sneak, down):
+                return method
+            if not down:
+                return method
+            method = "post" if self.bg_mode and not winapi.is_foreground(self.hwnd) else "real"
         if method == "post":
             winapi.post_shift(self.hwnd, down, key)
         else:
             (pydirectinput.keyDown if down else pydirectinput.keyUp)(key)
+        return method                                 # 실제로 쓴 방식 (뗄 때 같은 방식으로 떼야 함)
 
     def set_shift(self, down):
         method = self._shift_method()
@@ -421,9 +483,9 @@ class Macro:
             # 창 전환됨: 예전 방식으로 누른 Shift 를 확실히 뗌 (다른 창에 Shift 가 남지 않게)
             self._send_shift(self.shift_method, False)
             if down:
-                self._send_shift(method, True)
+                method = self._send_shift(method, True)
         else:
-            self._send_shift(method, down)
+            method = self._send_shift(method, down)
         self.shift_down, self.shift_method = down, method
 
     def check(self):
@@ -1083,6 +1145,8 @@ class Macro:
         return not self.hwnd or winapi.is_foreground(self.hwnd)
 
     def press(self, key):
+        if self.use_bridge() and self.bridge_call(self.bridge.press, key):
+            return
         if self.bg_mode and not self._front():
             winapi.post_key(self.hwnd, key)
         else:
@@ -1242,6 +1306,8 @@ class Macro:
         slot = self.rod_slot()
         self.state = "인벤 확인 중"
         self.set_shift(False)
+        if self.use_bridge() and self.inventory_from_bridge(slot):
+            return
         before = self.client_img()
         self.press("e")
         inv, img, opened, verified = None, None, False, False
@@ -1311,6 +1377,36 @@ class Macro:
                 self.inv_note += " -> 2번 연속 못 읽어서 이번 낚시 동안 인벤 확인 끔 (내구도는 색 막대로)"
             self.log("인벤 확인: " + self.inv_note)
             self.out("[인벤] " + self.inv_note)
+
+    def inventory_from_bridge(self, slot):
+        """연결 모드: 인벤을 열지 않고 게임에서 바로 빈칸·내구도를 받음 (F3+H·툴팁 읽기 필요 없음). 못 받으면 False."""
+        c = self.cfg
+        try:
+            inv = self.bridge.inventory(slot or 0)
+        except bridge.BridgeError as e:
+            self.out(f"[모드] 인벤 정보를 못 받음 ({e}) -> 화면으로 확인")
+            self.bridge = None
+            return False
+        self.inv_map = [bool(v) for v in inv["map"]]
+        self.inv_empty = int(inv["empty"])
+        note = [f"빈칸 {self.inv_empty}개"]
+        use_slot = slot or inv.get("sel")
+        if c["exact_durability"]:
+            d = inv.get("dur")
+            if d:
+                self.exact = {"cur": int(d[0]), "max": int(d[1]), "slot": use_slot, "at": self.run_caught}
+                if c["durability_max"] != d[1]:
+                    c["durability_max"] = int(d[1])
+                    save_config(c)
+                note.append(f"{use_slot}번 칸 내구도 {d[0]}/{d[1]} (모드)")
+            else:
+                self.exact = None
+                note.append(f"{use_slot}번 칸에 내구도 있는 물건이 없음")
+        self.inv_note = " / ".join(note)
+        self.inv_fails = 0
+        self.log("인벤 확인: " + self.inv_note)
+        self.out("[인벤] " + self.inv_note)
+        return True
 
     def view(self):
         return self.client_img() if self.hwnd else self.screen.full()
@@ -1678,6 +1774,8 @@ class Macro:
         while not self.quit:
             if not self.running or time.perf_counter() < self.start_at:
                 self.state = "시작 대기" if self.running else "정지됨"
+                if not self.running and self.bridge:  # 멈추면 연결 끊음 (모드가 막던 '자동 일시정지'도 원래대로)
+                    self.drop_bridge()
                 try:
                     self.sample()
                 except Exception:

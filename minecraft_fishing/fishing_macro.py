@@ -255,11 +255,15 @@ class Macro:
         c = self.cfg
         self.hwnd = winapi.find_minecraft()
         self.bg_mode = False
+        if not reopen:                                # 어떤 창을 마크로 잡았는지 (엉뚱한 창이면 우클릭이 거기로 감)
+            self.logger.write("START", f"마크 창: {winapi.window_desc(self.hwnd)}")
         if c["background"]:
             if not self.hwnd:
                 self.running = False
-                self.out("[정지] 마크 창을 못 찾았어 (마크를 먼저 켜줘)")
+                self.out("[정지] 마크 게임 창을 못 찾았어 (마크를 먼저 켜줘. 켜져 있는데 이러면 로그를 보내줘)")
                 raise Stop
+            if not reopen:
+                self.out(f"[창] 이 창으로 낚시해: {winapi.window_desc(self.hwnd)}")
             if winapi.is_minimized(self.hwnd):
                 self.running = False
                 self.out("[정지] 백그라운드 모드는 마크 창을 최소화하면 안 돼 (다른 창 뒤에 두기만)")

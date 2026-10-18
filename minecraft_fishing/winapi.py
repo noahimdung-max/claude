@@ -46,6 +46,8 @@ if IS_WIN:
     _sig(kernel32, "SetProcessInformation", wintypes.BOOL, wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
          wintypes.DWORD)
     _sig(kernel32, "CloseHandle", wintypes.BOOL, wintypes.HANDLE)
+    _sig(kernel32, "QueryFullProcessImageNameW", wintypes.BOOL, wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+         ctypes.POINTER(wintypes.DWORD))
     _sig(gdi32, "CreateCompatibleDC", HDC, HDC)
     _sig(gdi32, "CreateCompatibleBitmap", HBMP, HDC, ctypes.c_int, ctypes.c_int)
     _sig(gdi32, "SelectObject", HGDI, HDC, HGDI)
@@ -65,35 +67,84 @@ PW_RENDERFULLCONTENT = 0x00000002
 PW_CLIENTONLY = 0x00000001
 
 
+GAME_CLASSES = ("GLFW", "LWJGL")         # 마크 게임 창 종류 (1.13+ GLFW, 그 전 LWJGL)
+CLIENT_WORDS = ("minecraft", "lunar", "feather", "badlion", "labymod", "prism", "multimc", "salwyrr")
+
+
+def pick_game_window(cands):
+    """창 후보 [(제목, 창 종류, 실행 파일, 넓이, hwnd)] 에서 마크 게임 창 hwnd (없으면 None).
+    예전엔 제목에 'Minecraft' 가 있는 창이면 다 후보여서, 제목에 Minecraft 가 없는 클라이언트(루나·페더 등)를 쓰면
+    크롬 탭('Minecraft 위키')·디스코드 같은 엉뚱한 창을 골라 백그라운드 모드에서 우클릭이 그 창으로 갔음 (아예 안 던짐).
+    -> 게임 창 종류(GLFW/LWJGL)인 창만 고르고, 그중 제목·자바 실행 파일로 순위."""
+    best = None
+    for title, cls, exe, area, hwnd in cands:
+        if not cls.startswith(GAME_CLASSES):
+            continue
+        t, e = title.lower(), (exe or "").lower()
+        if "launcher" in t and "minecraft" in t:
+            continue
+        score = (4 if "minecraft" in t else 2 if any(w in t for w in CLIENT_WORDS) else 0) \
+            + (2 if e in ("javaw.exe", "java.exe") else 0)
+        key = (score, area)
+        if best is None or key > best[0]:
+            best = (key, hwnd)
+    return best[1] if best else None
+
+
+def window_desc(hwnd):
+    """로그용: 창 제목 / 종류 / 실행 파일."""
+    if not IS_WIN or not hwnd:
+        return "-"
+    title, cls, exe, _ = _window_info(hwnd)
+    return f"'{title}' / {cls} / {exe or '?'}"
+
+
+def _window_info(hwnd):
+    n = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(n + 1)
+    user32.GetWindowTextW(hwnd, buf, n + 1)
+    cls = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, cls, 64)
+    exe = ""
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x1000, False, pid.value)              # QUERY_LIMITED_INFORMATION
+    if h:
+        try:
+            pbuf = ctypes.create_unicode_buffer(520)
+            size = wintypes.DWORD(520)
+            if kernel32.QueryFullProcessImageNameW(h, 0, pbuf, ctypes.byref(size)):
+                exe = pbuf.value.replace("/", "\\").rsplit("\\", 1)[-1]
+        finally:
+            kernel32.CloseHandle(h)
+    r = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(r))
+    return buf.value, cls.value, exe, (r.right - r.left) * (r.bottom - r.top)
+
+
 def find_minecraft():
-    """제목에 'Minecraft' 가 들어간 보이는 창 (런처 제외). 반환 hwnd 또는 None."""
+    """마크 게임 창 (GLFW/LWJGL 창 중 제목에 Minecraft·클라이언트 이름이 있거나 자바로 도는 것). 반환 hwnd 또는 None."""
     if not IS_WIN:
         return None
-    found = []
+    cands = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def cb(hwnd, _):
-        if not user32.IsWindowVisible(hwnd):
+        if not user32.IsWindowVisible(hwnd) or user32.GetWindowTextLengthW(hwnd) == 0:
             return True
-        n = user32.GetWindowTextLengthW(hwnd)
-        if n == 0:
-            return True
-        buf = ctypes.create_unicode_buffer(n + 1)
-        user32.GetWindowTextW(hwnd, buf, n + 1)
-        title = buf.value
         cls = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, cls, 64)
-        if "Minecraft" in title and "Launcher" not in title:
-            found.append((cls.value.startswith("GLFW"), hwnd))
+        if cls.value.startswith(GAME_CLASSES):
+            try:
+                cands.append(_window_info(hwnd) + (hwnd,))
+            except Exception:
+                pass
         return True
 
     user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
                                    wintypes.LPARAM]
     user32.EnumWindows(cb, 0)
-    if not found:
-        return None
-    found.sort(reverse=True)            # GLFW(게임 창) 우선
-    return found[0][1]
+    return pick_game_window(cands)
 
 
 def is_foreground(hwnd):

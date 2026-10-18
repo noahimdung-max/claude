@@ -1,6 +1,8 @@
 """GitHub Actions 윈도우 서버에서 백그라운드 모드 기능을 실제로 시험.
-실제처럼 '다른 프로세스'에 Minecraft 제목의 빨간 창 + 그 위를 가리는 파란 창을 띄우고:
-창 찾기 / 가려진 창 캡처 / 메시지 보내기."""
+실제처럼 '다른 프로세스'에 마크 게임 창과 같은 종류(GLFW30)의 빨간 창 + 그 위를 가리는 파란 창을 띄우고:
+창 찾기 / 가려진 창 캡처 / 메시지 보내기.
+빨간 창 제목엔 일부러 'Minecraft' 를 안 넣음 (루나 클라이언트처럼). 대신 'Minecraft' 제목의 크롬 탭 같은 창을 미끼로 띄움
+(예전엔 미끼를 골라서 백그라운드 모드에서 우클릭이 그쪽으로 가 아예 안 던졌음)."""
 import faulthandler
 import subprocess
 import sys
@@ -9,9 +11,30 @@ import time
 faulthandler.dump_traceback_later(90, exit=True)   # 멈추면 어디서 멈췄는지 찍고 종료
 
 WIN = r'''
+import ctypes
 import tkinter as tk
-root = tk.Tk(); root.title("Minecraft* 1.21.1 - test"); root.geometry("1280x720+100+100")
-tk.Canvas(root, bg="#ff0000", highlightthickness=0).pack(fill="both", expand=True)
+from ctypes import wintypes
+u, g, k = ctypes.WinDLL("user32"), ctypes.WinDLL("gdi32"), ctypes.WinDLL("kernel32")
+WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+u.DefWindowProcW.restype = ctypes.c_ssize_t
+u.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+proc = WNDPROC(lambda h, m, w, l: u.DefWindowProcW(h, m, w, l))
+class WC(ctypes.Structure):
+    _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
+                ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+g.CreateSolidBrush.restype = wintypes.HBRUSH
+k.GetModuleHandleW.restype = wintypes.HMODULE
+hinst = k.GetModuleHandleW(None)
+wc = WC(0, proc, 0, 0, hinst, None, None, g.CreateSolidBrush(0x0000FF), None, "GLFW30")
+u.RegisterClassW(ctypes.byref(wc))
+u.CreateWindowExW.restype = wintypes.HWND
+u.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int,
+                              ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+game = u.CreateWindowExW(0, "GLFW30", "Lunar Client 1.21.4 - test", 0x00CF0000 | 0x10000000, 100, 100, 1296, 759,
+                         None, None, hinst, None)
+root = tk.Tk(); root.title("Minecraft 위키 - Chrome (미끼)"); root.geometry("600x400+900+500")
+tk.Canvas(root, bg="#00ff00", highlightthickness=0).pack(fill="both", expand=True)
 cover = tk.Toplevel(root); cover.title("Other app"); cover.geometry("1400x850+50+50")
 tk.Canvas(cover, bg="#0000ff", highlightthickness=0).pack(fill="both", expand=True)
 root.after(400, lambda: (cover.lift(), cover.focus_force()))
@@ -39,6 +62,8 @@ try:
         if hwnd:
             break
     check("find_minecraft", hwnd, hwnd)
+    desc = winapi.window_desc(hwnd)
+    check("picked the game-class window, not the 'Minecraft' browser decoy", "GLFW30" in desc and "Lunar" in desc, desc)
     time.sleep(1.0)
     check("not foreground (covered)", not winapi.is_foreground(hwnd))
     x, y, w, h = winapi.client_rect(hwnd)

@@ -107,6 +107,20 @@ class App(unittest.TestCase):
         a.push = lambda kind, data=None: threading.Timer(0.05, a.answer, (data["token"], [1, 2, 3, 4])).start()
         self.assertEqual(a._wait("pick", {}), [1, 2, 3, 4])
 
+    def test_window_on_left_monitor_kept(self):
+        """왼쪽 보조 모니터(x 음수)에 둔 창 위치를 그대로 씀 (실제 설정: win_x=-1303)."""
+        a = self.app
+        a.cfg.update(win_layout=webapp.LAYOUT, win_w=1060, win_h=780, win_x=-1303, win_y=141, remember_window=True)
+        old = webapp.virtual_screen
+        webapp.virtual_screen = lambda: (-1920, 0, 4480, 1440)
+        try:
+            a.screen_size = lambda: (2560, 1440)
+            self.assertEqual(a.first_geometry(), (1060, 780, -1303, 141))
+            a.cfg["win_x"] = -5000                                  # 정말 화면 밖이면 가운데
+            self.assertEqual(a.first_geometry()[2:], (None, None))
+        finally:
+            webapp.virtual_screen = old
+
     def test_bridge_hides_app(self):
         """pywebview 는 js_api 의 공개 속성을 화면에 내보냄 -> 앱 객체(설정·웹후크)는 숨겨야 함."""
         b = webapp.Bridge(self.app)

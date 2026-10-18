@@ -83,6 +83,15 @@ def hotkey(key, fn, gap=0.4):
     keyboard.on_press_key(key, on, suppress=False)
 
 
+def virtual_screen():
+    """모든 모니터를 합친 영역 (x, y, w, h). 예전엔 주 모니터만 봐서 왼쪽 모니터에 둔 창을 '화면 밖'으로 보고 가운데로 옮겼음."""
+    try:
+        m = ctypes.windll.user32.GetSystemMetrics
+        return m(76), m(77), m(78), m(79)
+    except Exception:
+        return 0, 0, 1920, 1080
+
+
 def png_b64(img, max_size=None, nearest=False):
     """BGR numpy -> data URL (max_size 안에 맞게 줄이거나 늘림)."""
     h, w = img.shape[:2]
@@ -986,8 +995,8 @@ class WebApp:
         if c.get("remember_window", True) and c.get("win_w"):
             w, h = self.fit(int(c["win_w"]), int(c.get("win_h") or ph))
             x, y = c.get("win_x"), c.get("win_y")
-            sw, sh = self.screen_size()
-            if x is None or y is None or not (-w + 80 < x < sw - 80 and 0 <= y < sh - 80):
+            vx, vy, vw, vh = virtual_screen()             # 모니터 전체 (왼쪽 보조 모니터면 x 가 음수)
+            if x is None or y is None or not (vx - w + 80 < x < vx + vw - 80 and vy <= y < vy + vh - 80):
                 x = y = None                              # 화면 밖이면 가운데
             return w, h, x, y
         w, h = self.fit(pw, ph)

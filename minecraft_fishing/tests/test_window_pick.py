@@ -12,6 +12,16 @@ pick = winapi_real.pick_game_window
 
 
 class PickWindow(unittest.TestCase):
+    def test_minecraft_26_sdl_window(self):
+        """실제 26.3 창: 종류가 GLFW 가 아니라 SDL_app (v1.9.1 이 이걸 못 찾았음)."""
+        cands = [("Minecraft* 26.3 - 멀티플레이 (제3자 서버)", "SDL_app", "javaw.exe", 2560 * 1369, 3),
+                 ("Minecraft 위키 - Chrome", "Chrome_WidgetWin_1", "chrome.exe", 1920 * 1000, 4)]
+        self.assertEqual(pick(cands), 3)
+
+    def test_java_window_unknown_class(self):
+        """창 종류가 처음 보는 것이어도 자바로 돌면 후보."""
+        self.assertEqual(pick([("Minecraft 27.1", "NewToolkitWnd", "javaw.exe", 800 * 600, 6)]), 6)
+
     def test_lunar_without_minecraft_title(self):
         cands = [("Lunar Client 1.21.4 (v2.18)", "GLFW30", "javaw.exe", 2560 * 1369, 1)]
         self.assertEqual(pick(cands), 1)

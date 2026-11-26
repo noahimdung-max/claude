@@ -1,0 +1,17 @@
+{
+  "name": "pixelfx",
+  "description": "pixelfx by Patch: pixel art effects and animations as code.",
+  "owner": {
+    "name": "Patch",
+    "url": "https://patch.gg"
+  },
+  "plugins": [
+    {
+      "name": "pixelfx",
+      "source": "./",
+      "description": "A skill for pixel art effects and sprite animations: use, recolor and export the library's effects, or draft, render, look at and refine new ones until they look hand-animated.",
+      "category": "gamedev",
+      "tags": ["pixel-art", "vfx", "animation", "sprite-sheet", "gamedev"]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "pixelfx",
+  "displayName": "pixelfx",
+  "version": "0.3.1",
+  "description": "Pixel art effects and animations as code: a library of ready-made effects in 20 categories, sprite sheet export for any engine, and a skill that makes new effects by drafting, rendering, looking and refining.",
+  "author": {
+    "name": "Patch",
+    "url": "https://patch.gg"
+  },
+  "homepage": "https://github.com/patch-gg/pixelfx",
+  "repository": "https://github.com/patch-gg/pixelfx",
+  "license": "MIT",
+  "keywords": ["pixel-art", "vfx", "effects", "animation", "sprite-sheet", "gamedev", "canvas", "godot", "unity", "phaser"]
+}
